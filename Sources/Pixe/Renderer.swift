@@ -57,8 +57,9 @@ class Renderer: NSObject, MTKViewDelegate {
         let aspect: Float
     }
     private var prefetchCache: [String: PrefetchEntry] = [:]
-    private var prefetchLoading: Set<String> = []  // paths currently being prefetched (prevents double decode)
+    private var prefetchLoading: Set<String> = []  // paths currently being loaded (prevents double decode)
     private var currentLoadTask: DispatchWorkItem?
+    private var loadGeneration: Int = 0  // increments on each navigation, stale tasks bail out
 
     init(device: MTLDevice, imageList: ImageList, initialMode: ViewMode, config: Config) {
         self.device = device
@@ -177,6 +178,8 @@ class Renderer: NSObject, MTKViewDelegate {
     func loadCurrentImage() {
         guard let path = imageList.currentPath else { return }
         currentLoadTask?.cancel()
+        loadGeneration += 1
+        let generation = loadGeneration
 
         // 1. Check prefetch cache (instant — display-quality)
         if let cached = prefetchCache[path] {
@@ -199,16 +202,22 @@ class Renderer: NSObject, MTKViewDelegate {
         }
 
         // 3. Background decode at display resolution
+        // Mark path as loading so prefetchAdjacentImages won't duplicate this decode
+        prefetchLoading.insert(path)
+
         let device = self.device
         let commandQueue = self.commandQueue
         let maxPixelSize = self.maxDisplayPixelSize
 
         let task = DispatchWorkItem { [weak self] in
-            guard let self = self, !(self.currentLoadTask?.isCancelled ?? true) else { return }
+            // Check generation: if user navigated away, this decode is stale
+            guard let self = self, self.loadGeneration == generation else { return }
             MemoryProfiler.logEvent("display decode starting: \((path as NSString).lastPathComponent)", device: device)
             let texture = ImageLoader.loadDisplayTexture(from: path, device: device, commandQueue: commandQueue, maxPixelSize: maxPixelSize)
             DispatchQueue.main.async { [weak self] in
-                guard let self = self, self.imageList.currentPath == path else { return }
+                guard let self = self else { return }
+                self.prefetchLoading.remove(path)
+                guard self.imageList.currentPath == path else { return }
                 if let texture = texture {
                     self.currentTexture = texture
                     self.imageAspect = Float(texture.width) / Float(texture.height)
