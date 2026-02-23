@@ -97,6 +97,8 @@ class ThumbnailCache {
     // Concurrency
     private let loadQueue = DispatchQueue(label: "pixe.thumbnail", qos: .utility, attributes: .concurrent)
     private let loadSemaphore = DispatchSemaphore(value: 4)
+    private var currentGeneration: Int = 0
+    private var currentPrefetchRange: Range<Int> = 0..<0
 
     init(device: MTLDevice, config: Config) {
         self.device = device
@@ -137,23 +139,35 @@ class ThumbnailCache {
 
         guard !toLoad.isEmpty else { return }
 
+        currentGeneration += 1
+        currentPrefetchRange = indices
+        let generation = currentGeneration
         let device = self.device
         let maxPixelSize = self.maxPixelSize
         let diskEnabled = self.diskCacheEnabled
+        let manifestSnapshot = diskEnabled ? self.manifest : [:]
 
         loadQueue.async { [weak self] in
             var results: [(Int, MTLTexture, Float, Data?, String?, ManifestEntry?)] = []
 
             for (index, path) in toLoad {
+                // Skip if a newer ensureLoaded call has been made and this index
+                // is outside the new prefetch range (user scrolled past it)
+                if let self = self, self.currentGeneration != generation,
+                   !self.currentPrefetchRange.contains(index) {
+                    DispatchQueue.main.async { self.loading.remove(index) }
+                    continue
+                }
+
                 self?.loadSemaphore.wait()
                 defer { self?.loadSemaphore.signal() }
 
                 let cacheKey = diskEnabled ? Self.cacheKey(for: path) : nil
 
                 // Try disk cache first
-                if diskEnabled, let key = cacheKey, let self = self {
-                    if let entry = self.manifestEntry(for: key) {
-                        let diskPath = self.diskPath(for: key)
+                if diskEnabled, let key = cacheKey {
+                    if let entry = manifestSnapshot[key] {
+                        guard let diskPath = self?.diskPath(for: key) else { continue }
                         if let data = try? Data(contentsOf: URL(fileURLWithPath: diskPath)) {
                             if let texture = ImageLoader.textureFromRawData(data, width: entry.width, height: entry.height, device: device) {
                                 results.append((index, texture, entry.aspect, nil, nil, nil))
