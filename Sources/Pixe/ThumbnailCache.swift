@@ -201,6 +201,11 @@ class ThumbnailCache {
         }
     }
 
+    /// Returns all cached textures for memory profiling
+    func textureSnapshot() -> [MTLTexture] {
+        return Array(cache.values)
+    }
+
     func invalidateAll() {
         cache.removeAll()
         aspects.removeAll()

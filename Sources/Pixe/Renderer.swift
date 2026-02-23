@@ -1,3 +1,4 @@
+import AppKit
 import MetalKit
 import simd
 
@@ -46,14 +47,19 @@ class Renderer: NSObject, MTKViewDelegate {
     var imageAspect: Float = 1.0
     var viewportSize: SIMD2<Float> = SIMD2(800, 600)
 
-    // Image prefetch cache: path → texture (with preview flag for RAW two-phase loading)
+    var maxDisplayPixelSize: Int {
+        return min(4096, Int(max(viewportSize.x, viewportSize.y)))
+    }
+
+    // Image prefetch cache: path → texture
     struct PrefetchEntry {
         let texture: MTLTexture
         let aspect: Float
-        let isPreview: Bool
     }
     private var prefetchCache: [String: PrefetchEntry] = [:]
+    private var prefetchLoading: Set<String> = []  // paths currently being loaded (prevents double decode)
     private var currentLoadTask: DispatchWorkItem?
+    private var loadGeneration: Int = 0  // increments on each navigation, stale tasks bail out
 
     init(device: MTLDevice, imageList: ImageList, initialMode: ViewMode, config: Config) {
         self.device = device
@@ -61,6 +67,11 @@ class Renderer: NSObject, MTKViewDelegate {
         self.imageList = imageList
         self.mode = initialMode
         self.hasMultipleImages = imageList.count > 1
+        if let screen = NSScreen.main {
+            let px = screen.frame.size.width * screen.backingScaleFactor
+            let py = screen.frame.size.height * screen.backingScaleFactor
+            self.viewportSize = SIMD2(Float(px), Float(py))
+        }
         super.init()
         setupPipeline()
         setupVertexBuffer()
@@ -167,80 +178,60 @@ class Renderer: NSObject, MTKViewDelegate {
     func loadCurrentImage() {
         guard let path = imageList.currentPath else { return }
         currentLoadTask?.cancel()
+        loadGeneration += 1
+        let generation = loadGeneration
 
-        // Check prefetch cache (instant)
+        // 1. Check prefetch cache (instant — display-quality)
         if let cached = prefetchCache[path] {
             currentTexture = cached.texture
             imageAspect = cached.aspect
             resetView()
             updateWindowTitle()
             if let view = window?.contentView as? MTKView { view.needsDisplay = true }
-            // If cached entry is a preview, kick off full decode
-            if cached.isPreview {
-                startFullDecode(for: path)
-            }
             prefetchAdjacentImages()
             return
         }
 
+        // 2. Show thumbnail immediately as placeholder (if available)
+        if let thumbTex = thumbnailCache?.texture(at: imageList.currentIndex) {
+            currentTexture = thumbTex
+            imageAspect = thumbnailCache?.aspect(at: imageList.currentIndex) ?? Float(thumbTex.width) / Float(thumbTex.height)
+            resetView()
+            updateWindowTitle()
+            if let view = window?.contentView as? MTKView { view.needsDisplay = true }
+        }
+
+        // 3. Background decode at display resolution
+        // Mark path as loading so prefetchAdjacentImages won't duplicate this decode
+        prefetchLoading.insert(path)
+
         let device = self.device
         let commandQueue = self.commandQueue
-        let isRaw = ImageLoader.isRawFile(path)
+        let maxPixelSize = self.maxDisplayPixelSize
 
         let task = DispatchWorkItem { [weak self] in
-            // Phase 1: For RAW files, try embedded preview first
-            if isRaw {
-                if let preview = ImageLoader.loadPreviewTexture(from: path, device: device, commandQueue: commandQueue) {
-                    let aspect = Float(preview.width) / Float(preview.height)
-                    DispatchQueue.main.async {
-                        guard let self = self, self.imageList.currentPath == path else { return }
-                        self.currentTexture = preview
-                        self.imageAspect = aspect
-                        self.prefetchCache[path] = PrefetchEntry(texture: preview, aspect: aspect, isPreview: true)
-                        self.resetView()
-                        self.updateWindowTitle()
-                        if let view = self.window?.contentView as? MTKView { view.needsDisplay = true }
-                        self.prefetchAdjacentImages()
-                    }
-                }
-            }
-
-            // Phase 2: Full decode (for all images, or as upgrade for RAW)
-            guard let task = self?.currentLoadTask, !task.isCancelled else { return }
-            let texture = ImageLoader.loadTexture(from: path, device: device, commandQueue: commandQueue)
-            DispatchQueue.main.async {
-                guard let self = self, self.imageList.currentPath == path else { return }
-                self.currentTexture = texture
+            // Check generation: if user navigated away, this decode is stale
+            guard let self = self, self.loadGeneration == generation else { return }
+            MemoryProfiler.logEvent("display decode starting: \((path as NSString).lastPathComponent)", device: device)
+            let texture = ImageLoader.loadDisplayTexture(from: path, device: device, commandQueue: commandQueue, maxPixelSize: maxPixelSize)
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                self.prefetchLoading.remove(path)
+                guard self.imageList.currentPath == path else { return }
                 if let texture = texture {
+                    self.currentTexture = texture
                     self.imageAspect = Float(texture.width) / Float(texture.height)
-                    self.prefetchCache[path] = PrefetchEntry(texture: texture, aspect: self.imageAspect, isPreview: false)
+                    self.prefetchCache[path] = PrefetchEntry(texture: texture, aspect: self.imageAspect)
+                    MemoryProfiler.logEvent("display decode done → prefetch [\(self.prefetchCache.count) entries]", device: device)
                 }
-                if !isRaw {
-                    self.resetView()
-                    self.updateWindowTitle()
-                    self.prefetchAdjacentImages()
-                }
+                self.resetView()
+                self.updateWindowTitle()
+                self.prefetchAdjacentImages()
                 if let view = self.window?.contentView as? MTKView { view.needsDisplay = true }
             }
         }
         currentLoadTask = task
         DispatchQueue.global(qos: .userInitiated).async(execute: task)
-    }
-
-    private func startFullDecode(for path: String) {
-        let device = self.device
-        let commandQueue = self.commandQueue
-        DispatchQueue.global(qos: .utility).async { [weak self] in
-            guard let texture = ImageLoader.loadTexture(from: path, device: device, commandQueue: commandQueue) else { return }
-            let aspect = Float(texture.width) / Float(texture.height)
-            DispatchQueue.main.async {
-                guard let self = self, self.imageList.currentPath == path else { return }
-                self.currentTexture = texture
-                self.imageAspect = aspect
-                self.prefetchCache[path] = PrefetchEntry(texture: texture, aspect: aspect, isPreview: false)
-                if let view = self.window?.contentView as? MTKView { view.needsDisplay = true }
-            }
-        }
     }
 
     private func prefetchAdjacentImages() {
@@ -258,31 +249,32 @@ class Renderer: NSObject, MTKViewDelegate {
             ([currentIdx] + adjacentIndices).map { imageList.allPaths[$0] }
         )
         for key in prefetchCache.keys where !keepPaths.contains(key) {
+            if let entry = prefetchCache[key] {
+                let size = MemoryProfiler.textureBytes(entry.texture)
+                MemoryProfiler.logEvent("prefetch evict: \((key as NSString).lastPathComponent) [\(MemoryProfiler.formatBytes(size))]", device: device)
+            }
             prefetchCache.removeValue(forKey: key)
         }
 
         let device = self.device
         let commandQueue = self.commandQueue
+        let maxPixelSize = self.maxDisplayPixelSize
 
         for idx in adjacentIndices {
             let path = imageList.allPaths[idx]
-            guard prefetchCache[path] == nil else { continue }
+            guard prefetchCache[path] == nil, !prefetchLoading.contains(path) else { continue }
+            prefetchLoading.insert(path)
 
             DispatchQueue.global(qos: .utility).async { [weak self] in
-                let texture: MTLTexture?
-                let isPreview: Bool
-                if ImageLoader.isRawFile(path),
-                   let preview = ImageLoader.loadPreviewTexture(from: path, device: device, commandQueue: commandQueue) {
-                    texture = preview
-                    isPreview = true
-                } else {
-                    texture = ImageLoader.loadTexture(from: path, device: device, commandQueue: commandQueue)
-                    isPreview = false
+                let texture = ImageLoader.loadDisplayTexture(from: path, device: device, commandQueue: commandQueue, maxPixelSize: maxPixelSize)
+                guard let tex = texture else {
+                    DispatchQueue.main.async { self?.prefetchLoading.remove(path) }
+                    return
                 }
-                guard let tex = texture else { return }
                 let aspect = Float(tex.width) / Float(tex.height)
                 DispatchQueue.main.async {
-                    self?.prefetchCache[path] = PrefetchEntry(texture: tex, aspect: aspect, isPreview: isPreview)
+                    self?.prefetchLoading.remove(path)
+                    self?.prefetchCache[path] = PrefetchEntry(texture: tex, aspect: aspect)
                 }
             }
         }
@@ -303,6 +295,43 @@ class Renderer: NSObject, MTKViewDelegate {
             window?.title = "pixe [\(imageList.count) images]"
         }
         updateInfoBar()
+    }
+
+    // MARK: - Memory Profiling
+
+    func generateMemoryReport() {
+        var prefetchEntries: [(path: String, size: Int, dims: String)] = []
+        for (path, entry) in prefetchCache {
+            let size = MemoryProfiler.textureBytes(entry.texture)
+            let dims = "\(entry.texture.width)×\(entry.texture.height)"
+            prefetchEntries.append((path: path, size: size, dims: dims))
+        }
+
+        var thumbCount = 0
+        var thumbTotalBytes = 0
+        if let cache = thumbnailCache {
+            let snapshot = cache.textureSnapshot()
+            thumbCount = snapshot.count
+            for tex in snapshot {
+                thumbTotalBytes += MemoryProfiler.textureBytes(tex)
+            }
+        }
+
+        var currentInfo: String? = nil
+        if let tex = currentTexture {
+            currentInfo = MemoryProfiler.textureSummary(tex)
+        }
+
+        let report = MemoryProfiler.Report(
+            rss: MemoryProfiler.residentMemoryBytes(),
+            virtual: MemoryProfiler.virtualMemoryBytes(),
+            metalAllocated: MemoryProfiler.metalAllocatedSize(device),
+            prefetchEntries: prefetchEntries,
+            thumbnailCount: thumbCount,
+            thumbnailTotalBytes: thumbTotalBytes,
+            currentTextureInfo: currentInfo
+        )
+        MemoryProfiler.printReport(report)
     }
 
     func updateInfoBar() {
@@ -338,7 +367,8 @@ class Renderer: NSObject, MTKViewDelegate {
     func enterImageMode(at index: Int) {
         imageList.goTo(index: index)
         mode = .image
-        currentTexture = nil
+        // Pre-set thumbnail as placeholder to avoid black flash
+        currentTexture = thumbnailCache?.texture(at: index)
         loadCurrentImage()
         invalidateCursorRects()
     }
@@ -348,7 +378,11 @@ class Renderer: NSObject, MTKViewDelegate {
         mode = .thumbnail
         gridLayout.selectedIndex = imageList.currentIndex
         currentTexture = nil
+        currentLoadTask?.cancel()
+        let evictedCount = prefetchCache.count
         prefetchCache.removeAll()
+        prefetchLoading.removeAll()
+        MemoryProfiler.logEvent("enterThumbnailMode: evicted \(evictedCount) prefetch entries", device: device)
         gridLayout.scrollToSelection()
         updateWindowTitle()
         invalidateCursorRects()
