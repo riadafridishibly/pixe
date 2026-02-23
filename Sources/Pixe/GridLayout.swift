@@ -191,6 +191,29 @@ class GridLayout {
         scrollToSelection()
     }
 
+    func pageUp() {
+        let visibleRows = max(1, Int(viewportHeight / cellSize))
+        let newIndex = selectedIndex - visibleRows * columns
+        if newIndex >= 0 {
+            selectedIndex = newIndex
+        } else {
+            selectedIndex = selectedIndex % columns
+        }
+        scrollToSelection()
+    }
+
+    func pageDown() {
+        guard totalItems > 0 else { return }
+        let visibleRows = max(1, Int(viewportHeight / cellSize))
+        let newIndex = selectedIndex + visibleRows * columns
+        if newIndex < totalItems {
+            selectedIndex = newIndex
+        } else {
+            selectedIndex = totalItems - 1
+        }
+        scrollToSelection()
+    }
+
     func goToFirst() {
         selectedIndex = 0
         scrollToSelection()
