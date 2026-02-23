@@ -88,4 +88,18 @@ class ImageList {
         guard !paths.isEmpty else { return }
         currentIndex = max(0, min(index, paths.count - 1))
     }
+
+    @discardableResult
+    func remove(at index: Int) -> String? {
+        guard index >= 0 && index < paths.count else { return nil }
+        let removed = paths.remove(at: index)
+        if paths.isEmpty {
+            currentIndex = 0
+        } else if index < currentIndex {
+            currentIndex -= 1
+        } else if currentIndex >= paths.count {
+            currentIndex = paths.count - 1
+        }
+        return removed
+    }
 }

@@ -34,7 +34,7 @@ class Renderer: NSObject, MTKViewDelegate {
 
     // View mode
     var mode: ViewMode
-    let hasMultipleImages: Bool
+    var hasMultipleImages: Bool { imageList.count > 1 }
 
     // Grid
     let gridLayout = GridLayout()
@@ -66,7 +66,6 @@ class Renderer: NSObject, MTKViewDelegate {
         self.commandQueue = device.makeCommandQueue()!
         self.imageList = imageList
         self.mode = initialMode
-        self.hasMultipleImages = imageList.count > 1
         if let screen = NSScreen.main {
             let px = screen.frame.size.width * screen.backingScaleFactor
             let py = screen.frame.size.height * screen.backingScaleFactor
@@ -399,6 +398,71 @@ class Renderer: NSObject, MTKViewDelegate {
 
     func hideImageInfo() {
         window?.hideInfoPanel()
+    }
+
+    // MARK: - Delete Image
+
+    func deleteImage(at index: Int) {
+        guard index >= 0 && index < imageList.count else { return }
+        let path = imageList.allPaths[index]
+        guard let window = window else { return }
+
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Move to Trash?"
+        alert.informativeText = path
+        alert.addButton(withTitle: "Move to Trash")
+        alert.addButton(withTitle: "Cancel")
+
+        if let nsImage = NSImage(contentsOfFile: path) {
+            let imageView = NSImageView(frame: NSRect(x: 0, y: 0, width: 128, height: 128))
+            imageView.image = nsImage
+            imageView.imageScaling = .scaleProportionallyUpOrDown
+            alert.accessoryView = imageView
+        }
+
+        alert.beginSheetModal(for: window) { [weak self] response in
+            if response == .alertFirstButtonReturn {
+                self?.performDeletion(at: index, path: path)
+            }
+        }
+    }
+
+    private func performDeletion(at index: Int, path: String) {
+        do {
+            try FileManager.default.trashItem(at: URL(fileURLWithPath: path), resultingItemURL: nil)
+        } catch {
+            let errorAlert = NSAlert()
+            errorAlert.alertStyle = .critical
+            errorAlert.messageText = "Failed to move to Trash"
+            errorAlert.informativeText = error.localizedDescription
+            errorAlert.runModal()
+            return
+        }
+
+        imageList.remove(at: index)
+
+        if imageList.isEmpty {
+            NSApp.terminate(nil)
+            return
+        }
+
+        thumbnailCache?.invalidateAll()
+        prefetchCache.removeValue(forKey: path)
+
+        gridLayout.totalItems = imageList.count
+        if gridLayout.selectedIndex >= imageList.count {
+            gridLayout.selectedIndex = imageList.count - 1
+        }
+
+        switch mode {
+        case .thumbnail:
+            gridLayout.scrollToSelection()
+            updateWindowTitle()
+            if let view = window?.contentView as? MTKView { view.needsDisplay = true }
+        case .image:
+            loadCurrentImage()
+        }
     }
 
     // MARK: - Mode Switching

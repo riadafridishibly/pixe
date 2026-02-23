@@ -59,20 +59,35 @@ class InputHandler {
         case "i":
             renderer.toggleImageInfo()
 
+        case "d":
+            renderer.deleteImage(at: renderer.gridLayout.selectedIndex)
+
+        case "n":
+            renderer.gridLayout.pageDown()
+            renderer.updateInfoBar()
+            view.needsDisplay = true
+
+        case "p":
+            renderer.gridLayout.pageUp()
+            renderer.updateInfoBar()
+            view.needsDisplay = true
+
         case "m":
             renderer.generateMemoryReport()
 
         case "g":
-            if event.modifierFlags.contains(.shift) {
-                renderer.gridLayout.goToLast()
-            } else {
-                renderer.gridLayout.goToFirst()
-            }
+            renderer.gridLayout.goToFirst()
             renderer.updateInfoBar()
             view.needsDisplay = true
 
         default:
-            handleThumbnailArrowKeys(keyCode: event.keyCode, view: view)
+            if event.characters == "G" {
+                renderer.gridLayout.goToLast()
+                renderer.updateInfoBar()
+                view.needsDisplay = true
+            } else {
+                handleThumbnailArrowKeys(keyCode: event.keyCode, view: view)
+            }
         }
     }
 
@@ -141,6 +156,9 @@ class InputHandler {
         case "p":
             navigatePrevious(view: view)
 
+        case "d":
+            renderer.deleteImage(at: renderer.imageList.currentIndex)
+
         case "o":
             renderer.revealInFinder()
 
@@ -151,15 +169,16 @@ class InputHandler {
             renderer.generateMemoryReport()
 
         case "g":
-            if event.modifierFlags.contains(.shift) {
-                renderer.imageList.goLast()
-            } else {
-                renderer.imageList.goFirst()
-            }
+            renderer.imageList.goFirst()
             renderer.loadCurrentImage()
 
         default:
-            handleImageArrowKeys(keyCode: event.keyCode, view: view)
+            if event.characters == "G" {
+                renderer.imageList.goLast()
+                renderer.loadCurrentImage()
+            } else {
+                handleImageArrowKeys(keyCode: event.keyCode, view: view)
+            }
         }
     }
 
