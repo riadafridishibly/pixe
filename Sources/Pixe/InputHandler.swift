@@ -53,6 +53,9 @@ class InputHandler {
             renderer.updateInfoBar()
             view.needsDisplay = true
 
+        case "m":
+            renderer.generateMemoryReport()
+
         case "g":
             if event.modifierFlags.contains(.shift) {
                 renderer.gridLayout.goToLast()
@@ -131,6 +134,9 @@ class InputHandler {
 
         case "p":
             navigatePrevious(view: view)
+
+        case "m":
+            renderer.generateMemoryReport()
 
         case "g":
             if event.modifierFlags.contains(.shift) {
