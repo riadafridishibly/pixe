@@ -11,8 +11,10 @@ class GridLayout {
     var selectedIndex: Int = 0
     var scrollOffset: Float = 0.0
 
+    let selectionBorder: Float = 6.0
+
     var columns: Int {
-        max(1, Int((viewportWidth + padding) / (thumbnailSize + padding)))
+        max(1, Int((viewportWidth - selectionBorder * 2 + padding) / (thumbnailSize + padding)))
     }
 
     var rows: Int {
@@ -25,7 +27,7 @@ class GridLayout {
     }
 
     var totalHeight: Float {
-        Float(rows) * cellSize + padding
+        Float(rows) * cellSize + padding + selectionBorder
     }
 
     var gridWidth: Float {
@@ -88,6 +90,24 @@ class GridLayout {
         } else {
             sx = halfW * imageAspect
         }
+
+        return simd_float4x4(
+            SIMD4<Float>(sx, 0,  0, 0),
+            SIMD4<Float>(0,  sy, 0, 0),
+            SIMD4<Float>(0,  0,  1, 0),
+            SIMD4<Float>(ndcX, ndcY, 0, 1)
+        )
+    }
+
+    func outerHighlightTransformForIndex(_ i: Int) -> simd_float4x4 {
+        let (px, py) = positionForIndex(i)
+        let border: Float = 6.0
+
+        let ndcX = (px + thumbnailSize / 2.0) / viewportWidth * 2.0 - 1.0
+        let ndcY = 1.0 - (py + thumbnailSize / 2.0) / viewportHeight * 2.0
+
+        let sx = (thumbnailSize + border * 2) / viewportWidth
+        let sy = (thumbnailSize + border * 2) / viewportHeight
 
         return simd_float4x4(
             SIMD4<Float>(sx, 0,  0, 0),
@@ -183,16 +203,16 @@ class GridLayout {
     }
 
     func scrollToSelection() {
-        let (_, py) = positionForIndex(selectedIndex)
-        let actualY = py + scrollOffset // position without scroll applied
+        let row = selectedIndex / columns
+        let itemY = padding + Float(row) * cellSize
 
-        // Scroll up if selection is above visible area
-        if actualY - scrollOffset < 0 {
-            scrollOffset = actualY
+        // Ensure border above selection is visible
+        if itemY - selectionBorder < scrollOffset {
+            scrollOffset = itemY - selectionBorder
         }
-        // Scroll down if selection is below visible area
-        if actualY + cellSize - scrollOffset > viewportHeight {
-            scrollOffset = actualY + cellSize - viewportHeight
+        // Ensure border below selection is visible
+        if itemY + thumbnailSize + selectionBorder > scrollOffset + viewportHeight {
+            scrollOffset = itemY + thumbnailSize + selectionBorder - viewportHeight
         }
         clampScroll()
     }

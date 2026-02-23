@@ -334,14 +334,21 @@ class Renderer: NSObject, MTKViewDelegate {
             encoder.setRenderPipelineState(flatColorPipelineState)
             encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
 
-            // Outer border quad (blue)
+            // White outer outline
+            var outerTransform = Uniforms(transform: gridLayout.outerHighlightTransformForIndex(gridLayout.selectedIndex))
+            encoder.setVertexBytes(&outerTransform, length: MemoryLayout<Uniforms>.stride, index: 1)
+            var outerColor = ColorUniforms(color: SIMD4<Float>(1.0, 1.0, 1.0, 1.0))
+            encoder.setFragmentBytes(&outerColor, length: MemoryLayout<ColorUniforms>.stride, index: 0)
+            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
+
+            // Black inner border
             var highlightTransform = Uniforms(transform: gridLayout.highlightTransformForIndex(gridLayout.selectedIndex))
             encoder.setVertexBytes(&highlightTransform, length: MemoryLayout<Uniforms>.stride, index: 1)
-            var borderColor = ColorUniforms(color: SIMD4<Float>(1.0, 1.0, 1.0, 1.0))
+            var borderColor = ColorUniforms(color: SIMD4<Float>(0.0, 0.0, 0.0, 1.0))
             encoder.setFragmentBytes(&borderColor, length: MemoryLayout<ColorUniforms>.stride, index: 0)
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
 
-            // Inner cell quad (dark background) to create border effect
+            // Cell background to create border effect
             var cellTransform = Uniforms(transform: gridLayout.cellTransformForIndex(gridLayout.selectedIndex))
             encoder.setVertexBytes(&cellTransform, length: MemoryLayout<Uniforms>.stride, index: 1)
             var bgColor = ColorUniforms(color: SIMD4<Float>(0.08, 0.08, 0.08, 1.0))

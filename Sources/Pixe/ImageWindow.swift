@@ -27,7 +27,7 @@ class ImageWindow: NSWindow {
         self.contentView = contentView
         self.backgroundColor = .black
         self.titlebarAppearsTransparent = true
-        self.titleVisibility = .visible
+        self.titleVisibility = .hidden
         self.appearance = NSAppearance(named: .darkAqua)
         self.minSize = NSSize(width: 320, height: 240)
         self.isReleasedWhenClosed = false
