@@ -148,11 +148,8 @@ class ThumbnailCache {
         let manifestSnapshot = diskEnabled ? self.manifest : [:]
 
         loadQueue.async { [weak self] in
-            var results: [(Int, MTLTexture, Float, Data?, String?, ManifestEntry?)] = []
-
             for (index, path) in toLoad {
-                // Skip if a newer ensureLoaded call has been made and this index
-                // is outside the new prefetch range (user scrolled past it)
+                // Pre-semaphore stale check: skip if user scrolled past
                 if let self = self, self.currentGeneration != generation,
                    !self.currentPrefetchRange.contains(index) {
                     DispatchQueue.main.async { self.loading.remove(index) }
@@ -160,57 +157,78 @@ class ThumbnailCache {
                 }
 
                 self?.loadSemaphore.wait()
-                defer { self?.loadSemaphore.signal() }
+
+                // Post-semaphore stale check: may have become stale while waiting
+                if let self = self, self.currentGeneration != generation,
+                   !self.currentPrefetchRange.contains(index) {
+                    self.loadSemaphore.signal()
+                    DispatchQueue.main.async { self.loading.remove(index) }
+                    continue
+                }
 
                 let cacheKey = diskEnabled ? Self.cacheKey(for: path) : nil
+                var texture: MTLTexture?
+                var aspect: Float = 1.0
+                var rawData: Data?
+                var manifestEntry: ManifestEntry?
 
                 // Try disk cache first
                 if diskEnabled, let key = cacheKey {
                     if let entry = manifestSnapshot[key] {
-                        guard let diskPath = self?.diskPath(for: key) else { continue }
-                        if let data = try? Data(contentsOf: URL(fileURLWithPath: diskPath)) {
-                            if let texture = ImageLoader.textureFromRawData(data, width: entry.width, height: entry.height, device: device) {
-                                results.append((index, texture, entry.aspect, nil, nil, nil))
-                                continue
+                        if let diskPath = self?.diskPath(for: key),
+                           let data = try? Data(contentsOf: URL(fileURLWithPath: diskPath)),
+                           let tex = ImageLoader.textureFromRawData(data, width: entry.width, height: entry.height, device: device) {
+                            texture = tex
+                            aspect = entry.aspect
+                        }
+                    }
+                }
+
+                // Generate fresh thumbnail if no cache hit
+                if texture == nil {
+                    if let result = ImageLoader.generateThumbnail(
+                        path: path, device: device, maxPixelSize: maxPixelSize
+                    ) {
+                        texture = result.texture
+                        aspect = result.aspect
+                        rawData = result.rawData
+                        let mtime = Self.fileModTime(path)
+                        manifestEntry = ManifestEntry(width: result.width, height: result.height, aspect: result.aspect, mtime: mtime)
+                    }
+                }
+
+                self?.loadSemaphore.signal()
+
+                // Deliver this thumbnail immediately to main thread
+                if let texture = texture {
+                    DispatchQueue.main.async {
+                        guard let self = self else { return }
+                        self.cache[index] = texture
+                        self.aspects[index] = aspect
+                        self.loading.remove(index)
+                        self.lru.touch(index)
+
+                        // Write to disk cache in background
+                        if diskEnabled, let rawData = rawData, let key = cacheKey, let entry = manifestEntry {
+                            self.manifest[key] = entry
+                            self.manifestDirty = true
+                            let diskPath = self.diskPath(for: key)
+                            self.loadQueue.async {
+                                self.writeDiskCache(data: rawData, to: diskPath)
                             }
                         }
-                    }
-                }
 
-                // Generate fresh thumbnail
-                guard let result = ImageLoader.generateThumbnail(
-                    path: path, device: device, maxPixelSize: maxPixelSize
-                ) else { continue }
-
-                let mtime = Self.fileModTime(path)
-                let entry = ManifestEntry(width: result.width, height: result.height, aspect: result.aspect, mtime: mtime)
-
-                results.append((index, result.texture, result.aspect, result.rawData, cacheKey, entry))
-            }
-
-            DispatchQueue.main.async {
-                guard let self = self else { return }
-                for (index, texture, aspect, rawData, cacheKey, entry) in results {
-                    self.cache[index] = texture
-                    self.aspects[index] = aspect
-                    self.loading.remove(index)
-                    self.lru.touch(index)
-
-                    // Write to disk cache in background
-                    if diskEnabled, let rawData = rawData, let key = cacheKey, let entry = entry {
-                        self.manifest[key] = entry
-                        self.manifestDirty = true
-                        let diskPath = self.diskPath(for: key)
-                        self.loadQueue.async {
-                            self.writeDiskCache(data: rawData, to: diskPath)
+                        self.evictIfNeeded()
+                        if self.manifestDirty {
+                            self.saveManifest()
                         }
+                        completion()
+                    }
+                } else {
+                    DispatchQueue.main.async {
+                        self?.loading.remove(index)
                     }
                 }
-                self.evictIfNeeded()
-                if self.manifestDirty {
-                    self.saveManifest()
-                }
-                completion()
             }
         }
     }
