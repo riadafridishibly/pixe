@@ -71,23 +71,23 @@ class InputHandler {
         guard let renderer = renderer else { return }
 
         switch keyCode {
-        case 123: // Left
+        case 123:  // Left
             renderer.gridLayout.moveLeft()
             renderer.updateInfoBar()
             view.needsDisplay = true
-        case 124: // Right
+        case 124:  // Right
             renderer.gridLayout.moveRight()
             renderer.updateInfoBar()
             view.needsDisplay = true
-        case 125: // Down
+        case 125:  // Down
             renderer.gridLayout.moveDown()
             renderer.updateInfoBar()
             view.needsDisplay = true
-        case 126: // Up
+        case 126:  // Up
             renderer.gridLayout.moveUp()
             renderer.updateInfoBar()
             view.needsDisplay = true
-        case 36: // Enter/Return
+        case 36:  // Enter/Return
             renderer.enterImageMode(at: renderer.gridLayout.selectedIndex)
         default:
             break
@@ -147,17 +147,17 @@ class InputHandler {
 
     private func handleImageArrowKeys(keyCode: UInt16, view: MTKView) {
         switch keyCode {
-        case 53: // Escape
+        case 53:  // Escape
             if renderer?.hasMultipleImages == true {
                 renderer?.enterThumbnailMode()
             }
-        case 36: // Enter/Return
+        case 36:  // Enter/Return
             if renderer?.hasMultipleImages == true {
                 renderer?.enterThumbnailMode()
             }
-        case 123: // Left arrow
+        case 123:  // Left arrow
             navigatePrevious(view: view)
-        case 124: // Right arrow
+        case 124:  // Right arrow
             navigateNext(view: view)
         default:
             break
@@ -207,30 +207,6 @@ class InputHandler {
         }
     }
 
-    // MARK: - Mouse Drag
-
-    func handleMouseDown(event: NSEvent, view: MTKView) {
-        guard renderer?.mode == .image else { return }
-        NSCursor.closedHand.set()
-    }
-
-    func handleMouseDragged(event: NSEvent, view: MTKView) {
-        guard renderer?.mode == .image else { return }
-        let dx = Float(-event.deltaX) / Float(view.bounds.width) * 2.0
-        let dy = Float(event.deltaY) / Float(view.bounds.height) * 2.0
-        renderer?.panBy(dx: dx, dy: dy)
-        view.needsDisplay = true
-    }
-
-    func handleMouseUp(event: NSEvent, view: MTKView) {
-        guard renderer?.mode == .image else { return }
-        if renderer?.scale ?? 1.0 > 1.0 {
-            NSCursor.openHand.set()
-        } else {
-            NSCursor.arrow.set()
-        }
-    }
-
     // MARK: - Trackpad Gestures
 
     func handleMagnification(gesture: NSMagnificationGestureRecognizer, view: MTKView) {
@@ -251,12 +227,24 @@ class InputHandler {
     func handlePan(gesture: NSPanGestureRecognizer, view: MTKView) {
         guard renderer?.mode == .image else { return }
 
-        let t = gesture.translation(in: view)
-        let dx = Float(t.x) / Float(view.bounds.width) * 2.0
-        let dy = Float(-t.y) / Float(view.bounds.height) * 2.0
-
-        renderer?.panBy(dx: dx, dy: dy)
-        gesture.setTranslation(.zero, in: view)
-        view.needsDisplay = true
+        switch gesture.state {
+        case .began:
+            NSCursor.closedHand.set()
+        case .changed:
+            let t = gesture.translation(in: view)
+            let dx = Float(t.x) / Float(view.bounds.width) * 2.0
+            let dy = Float(t.y) / Float(view.bounds.height) * 2.0
+            renderer?.panBy(dx: dx, dy: dy)
+            gesture.setTranslation(.zero, in: view)
+            view.needsDisplay = true
+        case .ended, .cancelled:
+            if renderer?.scale ?? 1.0 > 1.0 {
+                NSCursor.openHand.set()
+            } else {
+                NSCursor.arrow.set()
+            }
+        default:
+            break
+        }
     }
 }
