@@ -40,6 +40,30 @@ class MetalImageView: MTKView {
         inputHandler?.handleKeyDown(event: event, view: self)
     }
 
+    // MARK: - Mouse Drag
+
+    override func mouseDown(with event: NSEvent) {
+        inputHandler?.handleMouseDown(event: event, view: self)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        inputHandler?.handleMouseDragged(event: event, view: self)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        inputHandler?.handleMouseUp(event: event, view: self)
+    }
+
+    // MARK: - Cursor
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        guard let renderer = inputHandler?.renderer else { return }
+        if renderer.mode == .image && renderer.scale > 1.0 {
+            addCursorRect(bounds, cursor: .openHand)
+        }
+    }
+
     // MARK: - Scroll Wheel
 
     override func scrollWheel(with event: NSEvent) {

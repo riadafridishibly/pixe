@@ -59,7 +59,7 @@ enum ImageLoader {
             .textureUsage: MTLTextureUsage.shaderRead.rawValue,
             .textureStorageMode: MTLStorageMode.private.rawValue,
             .origin: MTKTextureLoader.Origin.topLeft,
-            .SRGB: true
+            .SRGB: false
         ]
         return try? textureLoader.newTexture(cgImage: cgImage, options: options)
     }

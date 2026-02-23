@@ -35,18 +35,22 @@ class InputHandler {
 
         case "h":
             renderer.gridLayout.moveLeft()
+            renderer.updateInfoBar()
             view.needsDisplay = true
 
         case "j":
             renderer.gridLayout.moveDown()
+            renderer.updateInfoBar()
             view.needsDisplay = true
 
         case "k":
             renderer.gridLayout.moveUp()
+            renderer.updateInfoBar()
             view.needsDisplay = true
 
         case "l":
             renderer.gridLayout.moveRight()
+            renderer.updateInfoBar()
             view.needsDisplay = true
 
         case "g":
@@ -55,6 +59,7 @@ class InputHandler {
             } else {
                 renderer.gridLayout.goToFirst()
             }
+            renderer.updateInfoBar()
             view.needsDisplay = true
 
         default:
@@ -68,15 +73,19 @@ class InputHandler {
         switch keyCode {
         case 123: // Left
             renderer.gridLayout.moveLeft()
+            renderer.updateInfoBar()
             view.needsDisplay = true
         case 124: // Right
             renderer.gridLayout.moveRight()
+            renderer.updateInfoBar()
             view.needsDisplay = true
         case 125: // Down
             renderer.gridLayout.moveDown()
+            renderer.updateInfoBar()
             view.needsDisplay = true
         case 126: // Up
             renderer.gridLayout.moveUp()
+            renderer.updateInfoBar()
             view.needsDisplay = true
         case 36: // Enter/Return
             renderer.enterImageMode(at: renderer.gridLayout.selectedIndex)
@@ -104,14 +113,17 @@ class InputHandler {
 
         case "+", "=":
             renderer.zoomBy(factor: 1.25)
+            view.window?.invalidateCursorRects(for: view)
             view.needsDisplay = true
 
         case "-":
             renderer.zoomBy(factor: 0.8)
+            view.window?.invalidateCursorRects(for: view)
             view.needsDisplay = true
 
         case "0":
             renderer.resetView()
+            view.window?.invalidateCursorRects(for: view)
             view.needsDisplay = true
 
         case "n", " ":
@@ -192,6 +204,30 @@ class InputHandler {
             let zoomFactor: Float = 1.0 + Float(event.scrollingDeltaY) * 0.05
             renderer?.zoomBy(factor: zoomFactor)
             view.needsDisplay = true
+        }
+    }
+
+    // MARK: - Mouse Drag
+
+    func handleMouseDown(event: NSEvent, view: MTKView) {
+        guard renderer?.mode == .image else { return }
+        NSCursor.closedHand.set()
+    }
+
+    func handleMouseDragged(event: NSEvent, view: MTKView) {
+        guard renderer?.mode == .image else { return }
+        let dx = Float(-event.deltaX) / Float(view.bounds.width) * 2.0
+        let dy = Float(event.deltaY) / Float(view.bounds.height) * 2.0
+        renderer?.panBy(dx: dx, dy: dy)
+        view.needsDisplay = true
+    }
+
+    func handleMouseUp(event: NSEvent, view: MTKView) {
+        guard renderer?.mode == .image else { return }
+        if renderer?.scale ?? 1.0 > 1.0 {
+            NSCursor.openHand.set()
+        } else {
+            NSCursor.arrow.set()
         }
     }
 

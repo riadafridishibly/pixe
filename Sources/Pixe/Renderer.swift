@@ -189,6 +189,35 @@ class Renderer: NSObject, MTKViewDelegate {
         case .thumbnail:
             window?.title = "pixe [\(imageList.count) images]"
         }
+        updateInfoBar()
+    }
+
+    func updateInfoBar() {
+        switch mode {
+        case .thumbnail:
+            guard !imageList.allPaths.isEmpty else { return }
+            let index = gridLayout.selectedIndex
+            let path = imageList.allPaths[min(index, imageList.allPaths.count - 1)]
+            let dir = shortenPath((path as NSString).deletingLastPathComponent)
+            window?.updateInfo("\(dir) \u{2014} \(imageList.count) images")
+        case .image:
+            guard let path = imageList.currentPath else { return }
+            let filename = (path as NSString).lastPathComponent
+            var text = filename
+            if let tex = currentTexture {
+                text += " \u{2014} \(tex.width) \u{00D7} \(tex.height)"
+            }
+            text += " \u{2014} [\(imageList.currentIndex + 1)/\(imageList.count)]"
+            window?.updateInfo(text)
+        }
+    }
+
+    private func shortenPath(_ path: String) -> String {
+        let home = NSHomeDirectory()
+        if path.hasPrefix(home) {
+            return "~" + path.dropFirst(home.count)
+        }
+        return path
     }
 
     // MARK: - Mode Switching
@@ -198,6 +227,7 @@ class Renderer: NSObject, MTKViewDelegate {
         mode = .image
         currentTexture = nil
         loadCurrentImage()
+        invalidateCursorRects()
     }
 
     func enterThumbnailMode() {
@@ -207,8 +237,15 @@ class Renderer: NSObject, MTKViewDelegate {
         currentTexture = nil
         gridLayout.scrollToSelection()
         updateWindowTitle()
+        invalidateCursorRects()
         if let view = window?.contentView as? MTKView {
             view.needsDisplay = true
+        }
+    }
+
+    private func invalidateCursorRects() {
+        if let view = window?.contentView {
+            window?.invalidateCursorRects(for: view)
         }
     }
 
@@ -300,7 +337,7 @@ class Renderer: NSObject, MTKViewDelegate {
             // Outer border quad (blue)
             var highlightTransform = Uniforms(transform: gridLayout.highlightTransformForIndex(gridLayout.selectedIndex))
             encoder.setVertexBytes(&highlightTransform, length: MemoryLayout<Uniforms>.stride, index: 1)
-            var borderColor = ColorUniforms(color: SIMD4<Float>(0.2, 0.5, 1.0, 1.0))
+            var borderColor = ColorUniforms(color: SIMD4<Float>(1.0, 1.0, 1.0, 1.0))
             encoder.setFragmentBytes(&borderColor, length: MemoryLayout<ColorUniforms>.stride, index: 0)
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
 

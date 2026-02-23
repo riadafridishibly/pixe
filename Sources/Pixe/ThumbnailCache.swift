@@ -92,7 +92,7 @@ class ThumbnailCache {
             .textureUsage: MTLTextureUsage.shaderRead.rawValue,
             .textureStorageMode: MTLStorageMode.shared.rawValue,
             .origin: MTKTextureLoader.Origin.topLeft,
-            .SRGB: true
+            .SRGB: false
         ]
         guard let texture = try? loader.newTexture(cgImage: cgImage, options: texOptions) else {
             return nil
