@@ -352,6 +352,15 @@ class ThumbnailCache {
         manifest = decoded
     }
 
+    func flushManifest() {
+        guard let work = pendingManifestSave, !work.isCancelled else { return }
+        work.cancel()
+        pendingManifestSave = nil
+        manifestQueue.sync {
+            work.perform()
+        }
+    }
+
     private func saveManifest() {
         manifestDirty = false
         // Snapshot manifest (value-type copy) on main thread
