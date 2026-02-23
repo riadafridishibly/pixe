@@ -1,10 +1,27 @@
 import Foundation
 
+enum ExtensionFilter {
+    case exclude(Set<String>)
+    case include(Set<String>)
+
+    static let defaultExcluded: Set<String> = ["svg", "pdf"]
+
+    func accepts(_ path: String) -> Bool {
+        let ext = (path as NSString).pathExtension.lowercased()
+        guard !ext.isEmpty else { return false }
+        switch self {
+        case .exclude(let set): return !set.contains(ext)
+        case .include(let set): return set.contains(ext)
+        }
+    }
+}
+
 struct Config {
     let thumbDir: String
     let thumbSize: Int
     let diskCacheEnabled: Bool
     let cleanThumbs: Bool
+    let extensionFilter: ExtensionFilter
     let imageArguments: [String]
 
     static let defaultThumbDir: String = {
@@ -20,6 +37,8 @@ struct Config {
         var diskCacheEnabled = true
         var cleanThumbs = false
         var imageArguments: [String] = []
+        var includeExts: Set<String>? = nil
+        var excludeExts: Set<String>? = nil
 
         var i = 0
         while i < args.count {
@@ -45,6 +64,14 @@ struct Config {
                 }
             case "--no-cache":
                 diskCacheEnabled = false
+            case let a where a.hasPrefix("--include="):
+                includeExts = parseExtensions(String(a.dropFirst("--include=".count)))
+            case "--include":
+                i += 1; if i < args.count { includeExts = parseExtensions(args[i]) }
+            case let a where a.hasPrefix("--exclude="):
+                excludeExts = parseExtensions(String(a.dropFirst("--exclude=".count)))
+            case "--exclude":
+                i += 1; if i < args.count { excludeExts = parseExtensions(args[i]) }
             case "--help", "-h":
                 printUsage()
                 exit(0)
@@ -54,11 +81,23 @@ struct Config {
             i += 1
         }
 
+        if includeExts != nil && excludeExts != nil {
+            fputs("pixe: --include and --exclude are mutually exclusive\n", stderr)
+            exit(1)
+        }
+        let extensionFilter: ExtensionFilter
+        if let incl = includeExts {
+            extensionFilter = .include(incl)
+        } else {
+            extensionFilter = .exclude(ExtensionFilter.defaultExcluded.union(excludeExts ?? []))
+        }
+
         return Config(
             thumbDir: thumbDir,
             thumbSize: thumbSize,
             diskCacheEnabled: diskCacheEnabled,
             cleanThumbs: cleanThumbs,
+            extensionFilter: extensionFilter,
             imageArguments: imageArguments
         )
     }
@@ -78,6 +117,14 @@ struct Config {
         }
     }
 
+    private static func parseExtensions(_ value: String) -> Set<String> {
+        Set(value.split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .map { $0.hasPrefix(".") ? String($0.dropFirst()) : String($0) }
+            .map { $0.lowercased() }
+            .filter { !$0.isEmpty })
+    }
+
     private static func printUsage() {
         let usage = """
         Usage: pixe [options] <image|directory> [image|directory ...]
@@ -86,8 +133,12 @@ struct Config {
           --thumb-dir <path>   Thumbnail cache directory (default: ~/.cache/pixe/thumbs)
           --thumb-size <int>   Max thumbnail pixel size (default: 256)
           --no-cache           Disable disk thumbnail cache
+          --include <exts>     Only show these extensions (e.g. --include=.jpg,.png)
+          --exclude <exts>     Hide these extensions (e.g. --exclude=.svg,.pdf)
           --clean-thumbs       Delete thumbnail cache and exit
           -h, --help           Show this help
+
+        By default, .svg and .pdf are excluded. --include and --exclude are mutually exclusive.
         """
         fputs(usage + "\n", stderr)
     }

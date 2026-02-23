@@ -15,7 +15,7 @@ if config.imageArguments.isEmpty {
     exit(1)
 }
 
-let imageList = ImageList(arguments: config.imageArguments)
+let imageList = ImageList(arguments: config.imageArguments, config: config)
 
 if imageList.isEmpty {
     fputs("pixe: no images found\n", stderr)

@@ -14,7 +14,7 @@ class ImageList {
         return paths[currentIndex]
     }
 
-    init(arguments: [String]) {
+    init(arguments: [String], config: Config) {
         let fileManager = FileManager.default
 
         for arg in arguments {
@@ -32,16 +32,16 @@ class ImageList {
             }
 
             if isDirectory.boolValue {
-                enumerateDirectory(at: path, fileManager: fileManager)
+                enumerateDirectory(at: path, fileManager: fileManager, config: config)
             } else {
-                if ImageLoader.isImageFile(path) {
+                if ImageLoader.isImageFile(path) && config.extensionFilter.accepts(path) {
                     paths.append(path)
                 }
             }
         }
     }
 
-    private func enumerateDirectory(at path: String, fileManager: FileManager) {
+    private func enumerateDirectory(at path: String, fileManager: FileManager, config: Config) {
         let url = URL(fileURLWithPath: path)
         let keys: [URLResourceKey] = [.isRegularFileKey, .contentTypeKey]
         guard let enumerator = fileManager.enumerator(
@@ -58,6 +58,7 @@ class ImageList {
                   contentType.conforms(to: .image) else {
                 continue
             }
+            guard config.extensionFilter.accepts(fileURL.path) else { continue }
             discovered.append(fileURL.path)
         }
         discovered.sort()
