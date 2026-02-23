@@ -46,7 +46,11 @@ class Renderer: NSObject, MTKViewDelegate {
     var imageAspect: Float = 1.0
     var viewportSize: SIMD2<Float> = SIMD2(800, 600)
 
-    init(device: MTLDevice, imageList: ImageList, initialMode: ViewMode) {
+    // Image prefetch cache: path → texture
+    private var prefetchCache: [String: (texture: MTLTexture, aspect: Float)] = [:]
+    private var currentLoadTask: DispatchWorkItem?
+
+    init(device: MTLDevice, imageList: ImageList, initialMode: ViewMode, config: Config) {
         self.device = device
         self.commandQueue = device.makeCommandQueue()!
         self.imageList = imageList
@@ -58,7 +62,7 @@ class Renderer: NSObject, MTKViewDelegate {
         setupSampler()
 
         if hasMultipleImages {
-            thumbnailCache = ThumbnailCache(device: device)
+            thumbnailCache = ThumbnailCache(device: device, config: config)
             gridLayout.totalItems = imageList.count
         }
     }
@@ -120,7 +124,7 @@ class Renderer: NSObject, MTKViewDelegate {
         let descriptor = MTLSamplerDescriptor()
         descriptor.minFilter = .linear
         descriptor.magFilter = .linear
-        descriptor.mipFilter = .notMipmapped
+        descriptor.mipFilter = .linear  // Enable mipmap filtering
         descriptor.sAddressMode = .clampToEdge
         descriptor.tAddressMode = .clampToEdge
         samplerState = device.makeSamplerState(descriptor: descriptor)
@@ -153,23 +157,80 @@ class Renderer: NSObject, MTKViewDelegate {
         )
     }
 
-    // MARK: - Image Loading
+    // MARK: - Image Loading with Prefetch & Cancellation
 
     func loadCurrentImage() {
         guard let path = imageList.currentPath else { return }
 
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self = self else { return }
-            let texture = ImageLoader.loadTexture(from: path, device: self.device)
+        // Cancel any in-flight load
+        currentLoadTask?.cancel()
+
+        // Check prefetch cache first
+        if let cached = prefetchCache[path] {
+            currentTexture = cached.texture
+            imageAspect = cached.aspect
+            resetView()
+            updateWindowTitle()
+            if let view = window?.contentView as? MTKView {
+                view.needsDisplay = true
+            }
+            prefetchAdjacentImages()
+            return
+        }
+
+        let device = self.device
+        let commandQueue = self.commandQueue
+        let task = DispatchWorkItem { [weak self] in
+            let texture = ImageLoader.loadTexture(from: path, device: device, commandQueue: commandQueue)
             DispatchQueue.main.async {
+                guard let self = self, self.imageList.currentPath == path else { return }
                 self.currentTexture = texture
                 if let texture = texture {
                     self.imageAspect = Float(texture.width) / Float(texture.height)
+                    self.prefetchCache[path] = (texture, self.imageAspect)
                 }
                 self.resetView()
                 self.updateWindowTitle()
                 if let view = self.window?.contentView as? MTKView {
                     view.needsDisplay = true
+                }
+                self.prefetchAdjacentImages()
+            }
+        }
+        currentLoadTask = task
+        DispatchQueue.global(qos: .userInitiated).async(execute: task)
+    }
+
+    private func prefetchAdjacentImages() {
+        let currentIdx = imageList.currentIndex
+        let count = imageList.count
+        guard count > 1 else { return }
+
+        let adjacentIndices = [
+            (currentIdx + 1) % count,
+            (currentIdx - 1 + count) % count
+        ]
+
+        // Evict entries that are no longer adjacent or current
+        let keepPaths = Set(
+            ([currentIdx] + adjacentIndices).map { imageList.allPaths[$0] }
+        )
+        for key in prefetchCache.keys where !keepPaths.contains(key) {
+            prefetchCache.removeValue(forKey: key)
+        }
+
+        let device = self.device
+        let commandQueue = self.commandQueue
+
+        for idx in adjacentIndices {
+            let path = imageList.allPaths[idx]
+            guard prefetchCache[path] == nil else { continue }
+
+            DispatchQueue.global(qos: .utility).async { [weak self] in
+                guard let texture = ImageLoader.loadTexture(from: path, device: device, commandQueue: commandQueue) else { return }
+                let aspect = Float(texture.width) / Float(texture.height)
+                DispatchQueue.main.async {
+                    self?.prefetchCache[path] = (texture, aspect)
                 }
             }
         }
@@ -235,6 +296,7 @@ class Renderer: NSObject, MTKViewDelegate {
         mode = .thumbnail
         gridLayout.selectedIndex = imageList.currentIndex
         currentTexture = nil
+        prefetchCache.removeAll()
         gridLayout.scrollToSelection()
         updateWindowTitle()
         invalidateCursorRects()
@@ -356,16 +418,16 @@ class Renderer: NSObject, MTKViewDelegate {
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
         }
 
-        // Draw visible thumbnails
+        // Draw visible thumbnails — set shared state once
         encoder.setRenderPipelineState(pipelineState)
+        encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
+        encoder.setFragmentSamplerState(samplerState, index: 0)
         for i in visible {
             guard let texture = cache.texture(at: i) else { continue }
             let aspect = cache.aspect(at: i)
             var uniforms = Uniforms(transform: gridLayout.transformForIndex(i, imageAspect: aspect))
-            encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
             encoder.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
             encoder.setFragmentTexture(texture, index: 0)
-            encoder.setFragmentSamplerState(samplerState, index: 0)
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
         }
 

@@ -4,13 +4,15 @@ import MetalKit
 class AppDelegate: NSObject, NSApplicationDelegate {
     let imageList: ImageList
     let initialMode: ViewMode
+    let config: Config
     var window: ImageWindow!
     var metalView: MetalImageView!
     var renderer: Renderer!
 
-    init(imageList: ImageList, initialMode: ViewMode) {
+    init(imageList: ImageList, initialMode: ViewMode, config: Config) {
         self.imageList = imageList
         self.initialMode = initialMode
+        self.config = config
         super.init()
     }
 
@@ -23,7 +25,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        renderer = Renderer(device: device, imageList: imageList, initialMode: initialMode)
+        renderer = Renderer(device: device, imageList: imageList, initialMode: initialMode, config: config)
 
         metalView = MetalImageView(frame: .zero, device: device)
         metalView.delegate = renderer

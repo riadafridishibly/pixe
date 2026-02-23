@@ -1,26 +1,121 @@
 import Metal
-import ImageIO
-import CoreGraphics
+import Foundation
+import CommonCrypto
+
+// MARK: - O(1) LRU via doubly-linked list
+
+private class LRUNode {
+    let key: Int
+    var prev: LRUNode?
+    var next: LRUNode?
+    init(key: Int) { self.key = key }
+}
+
+private class LRUList {
+    private var head: LRUNode?  // oldest
+    private var tail: LRUNode?  // newest
+    private var map: [Int: LRUNode] = [:]
+
+    var count: Int { map.count }
+
+    func touch(_ key: Int) {
+        if let node = map[key] {
+            remove(node)
+            appendTail(node)
+        } else {
+            let node = LRUNode(key: key)
+            map[key] = node
+            appendTail(node)
+        }
+    }
+
+    func evictOldest() -> Int? {
+        guard let node = head else { return nil }
+        remove(node)
+        map.removeValue(forKey: node.key)
+        return node.key
+    }
+
+    func removeKey(_ key: Int) {
+        guard let node = map.removeValue(forKey: key) else { return }
+        remove(node)
+    }
+
+    func removeAll() {
+        head = nil
+        tail = nil
+        map.removeAll()
+    }
+
+    private func remove(_ node: LRUNode) {
+        node.prev?.next = node.next
+        node.next?.prev = node.prev
+        if head === node { head = node.next }
+        if tail === node { tail = node.prev }
+        node.prev = nil
+        node.next = nil
+    }
+
+    private func appendTail(_ node: LRUNode) {
+        node.prev = tail
+        node.next = nil
+        tail?.next = node
+        tail = node
+        if head == nil { head = node }
+    }
+}
+
+// MARK: - Disk manifest entry
+
+private struct ManifestEntry: Codable {
+    let width: Int
+    let height: Int
+    let aspect: Float
+    let mtime: Double  // source file modification time
+}
+
+// MARK: - ThumbnailCache
 
 class ThumbnailCache {
     let device: MTLDevice
     let maxCached: Int = 300
-    let maxPixelSize: Int = 256
+    let maxPixelSize: Int
 
+    // In-memory texture cache
     private var cache: [Int: MTLTexture] = [:]
     private(set) var aspects: [Int: Float] = [:]
     private var loading: Set<Int> = []
-    private var accessOrder: [Int] = []
+    private let lru = LRUList()
 
+    // Disk cache
+    private let diskCacheEnabled: Bool
+    private let thumbDir: String
+    private var manifest: [String: ManifestEntry] = [:]
+    private let manifestPath: String
+    private var manifestDirty = false
+
+    // Concurrency
     private let loadQueue = DispatchQueue(label: "pixe.thumbnail", qos: .utility, attributes: .concurrent)
+    private let loadSemaphore = DispatchSemaphore(value: 4)
 
-    init(device: MTLDevice) {
+    init(device: MTLDevice, config: Config) {
         self.device = device
+        self.maxPixelSize = config.thumbSize
+        self.diskCacheEnabled = config.diskCacheEnabled
+        self.thumbDir = config.thumbDir
+        self.manifestPath = (config.thumbDir as NSString).appendingPathComponent("manifest.json")
+
+        if diskCacheEnabled {
+            ensureDirectory(thumbDir)
+            loadManifest()
+        }
     }
+
+    // MARK: - Public API
 
     func texture(at index: Int) -> MTLTexture? {
         if let tex = cache[index] {
-            touchAccess(index)
+            lru.touch(index)
             return tex
         }
         return nil
@@ -31,6 +126,7 @@ class ThumbnailCache {
     }
 
     func ensureLoaded(indices: Range<Int>, paths: [String], completion: @escaping () -> Void) {
+        // Called from main thread only
         var toLoad: [(Int, String)] = []
         for i in indices {
             guard i < paths.count else { continue }
@@ -43,108 +139,146 @@ class ThumbnailCache {
 
         let device = self.device
         let maxPixelSize = self.maxPixelSize
+        let diskEnabled = self.diskCacheEnabled
 
         loadQueue.async { [weak self] in
-            var results: [(Int, MTLTexture, Float)] = []
+            var results: [(Int, MTLTexture, Float, Data?, String?, ManifestEntry?)] = []
 
             for (index, path) in toLoad {
-                guard let (texture, aspect) = Self.generateThumbnail(
+                self?.loadSemaphore.wait()
+                defer { self?.loadSemaphore.signal() }
+
+                let cacheKey = diskEnabled ? Self.cacheKey(for: path) : nil
+
+                // Try disk cache first
+                if diskEnabled, let key = cacheKey, let self = self {
+                    if let entry = self.manifestEntry(for: key) {
+                        let diskPath = self.diskPath(for: key)
+                        if let data = try? Data(contentsOf: URL(fileURLWithPath: diskPath)) {
+                            if let texture = ImageLoader.textureFromRawData(data, width: entry.width, height: entry.height, device: device) {
+                                results.append((index, texture, entry.aspect, nil, nil, nil))
+                                continue
+                            }
+                        }
+                    }
+                }
+
+                // Generate fresh thumbnail
+                guard let result = ImageLoader.generateThumbnail(
                     path: path, device: device, maxPixelSize: maxPixelSize
                 ) else { continue }
-                results.append((index, texture, aspect))
+
+                let mtime = Self.fileModTime(path)
+                let entry = ManifestEntry(width: result.width, height: result.height, aspect: result.aspect, mtime: mtime)
+
+                results.append((index, result.texture, result.aspect, result.rawData, cacheKey, entry))
             }
 
             DispatchQueue.main.async {
                 guard let self = self else { return }
-                for (index, texture, aspect) in results {
+                for (index, texture, aspect, rawData, cacheKey, entry) in results {
                     self.cache[index] = texture
                     self.aspects[index] = aspect
                     self.loading.remove(index)
-                    self.touchAccess(index)
+                    self.lru.touch(index)
+
+                    // Write to disk cache in background
+                    if diskEnabled, let rawData = rawData, let key = cacheKey, let entry = entry {
+                        self.manifest[key] = entry
+                        self.manifestDirty = true
+                        let diskPath = self.diskPath(for: key)
+                        self.loadQueue.async {
+                            self.writeDiskCache(data: rawData, to: diskPath)
+                        }
+                    }
                 }
                 self.evictIfNeeded()
+                if self.manifestDirty {
+                    self.saveManifest()
+                }
                 completion()
             }
-        }
-    }
-
-    private static func generateThumbnail(
-        path: String, device: MTLDevice, maxPixelSize: Int
-    ) -> (MTLTexture, Float)? {
-        let url = URL(fileURLWithPath: path)
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
-
-        let options: [CFString: Any] = [
-            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceShouldCacheImmediately: true
-        ]
-        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
-            return nil
-        }
-
-        let aspect = Float(cgImage.width) / Float(cgImage.height)
-
-        let width = cgImage.width
-        let height = cgImage.height
-        let bytesPerRow = width * 4
-
-        guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
-              let context = CGContext(
-                  data: nil,
-                  width: width,
-                  height: height,
-                  bitsPerComponent: 8,
-                  bytesPerRow: bytesPerRow,
-                  space: colorSpace,
-                  bitmapInfo: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
-              ),
-              let data = context.data else {
-            return nil
-        }
-
-        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
-
-        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
-            pixelFormat: .bgra8Unorm,
-            width: width,
-            height: height,
-            mipmapped: false
-        )
-        descriptor.usage = .shaderRead
-        descriptor.storageMode = .shared
-
-        guard let texture = device.makeTexture(descriptor: descriptor) else { return nil }
-        texture.replace(
-            region: MTLRegion(origin: .init(), size: MTLSize(width: width, height: height, depth: 1)),
-            mipmapLevel: 0,
-            withBytes: data,
-            bytesPerRow: bytesPerRow
-        )
-
-        return (texture, aspect)
-    }
-
-    private func touchAccess(_ index: Int) {
-        if let pos = accessOrder.firstIndex(of: index) {
-            accessOrder.remove(at: pos)
-        }
-        accessOrder.append(index)
-    }
-
-    private func evictIfNeeded() {
-        while cache.count > maxCached && !accessOrder.isEmpty {
-            let oldest = accessOrder.removeFirst()
-            cache.removeValue(forKey: oldest)
-            aspects.removeValue(forKey: oldest)
         }
     }
 
     func invalidateAll() {
         cache.removeAll()
         aspects.removeAll()
-        accessOrder.removeAll()
+        lru.removeAll()
         loading.removeAll()
+    }
+
+    // MARK: - LRU Eviction
+
+    private func evictIfNeeded() {
+        while cache.count > maxCached {
+            guard let oldest = lru.evictOldest() else { break }
+            cache.removeValue(forKey: oldest)
+            aspects.removeValue(forKey: oldest)
+        }
+    }
+
+    // MARK: - Disk Cache
+
+    private static func cacheKey(for path: String) -> String {
+        let mtime = fileModTime(path)
+        let input = "\(path):\(mtime)"
+        return sha256(input)
+    }
+
+    private static func fileModTime(_ path: String) -> Double {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
+              let date = attrs[.modificationDate] as? Date else {
+            return 0
+        }
+        return date.timeIntervalSince1970
+    }
+
+    private static func sha256(_ string: String) -> String {
+        let data = Data(string.utf8)
+        var hash = [UInt8](repeating: 0, count: Int(CC_SHA256_DIGEST_LENGTH))
+        data.withUnsafeBytes { ptr in
+            _ = CC_SHA256(ptr.baseAddress, CC_LONG(data.count), &hash)
+        }
+        return hash.map { String(format: "%02x", $0) }.joined()
+    }
+
+    private func diskPath(for key: String) -> String {
+        let subdir = (thumbDir as NSString).appendingPathComponent(String(key.prefix(2)))
+        ensureDirectory(subdir)
+        return (subdir as NSString).appendingPathComponent(key + ".raw")
+    }
+
+    private func manifestEntry(for key: String) -> ManifestEntry? {
+        return manifest[key]
+    }
+
+    private func writeDiskCache(data: Data, to path: String) {
+        try? data.write(to: URL(fileURLWithPath: path))
+    }
+
+    private func ensureDirectory(_ path: String) {
+        let fm = FileManager.default
+        if !fm.fileExists(atPath: path) {
+            try? fm.createDirectory(atPath: path, withIntermediateDirectories: true)
+        }
+    }
+
+    // MARK: - Manifest I/O
+
+    private func loadManifest() {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: manifestPath)),
+              let decoded = try? JSONDecoder().decode([String: ManifestEntry].self, from: data) else {
+            return
+        }
+        manifest = decoded
+    }
+
+    private func saveManifest() {
+        manifestDirty = false
+        guard let data = try? JSONEncoder().encode(manifest) else { return }
+        loadQueue.async { [manifestPath] in
+            try? data.write(to: URL(fileURLWithPath: manifestPath))
+        }
     }
 }

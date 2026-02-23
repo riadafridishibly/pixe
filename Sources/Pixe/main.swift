@@ -1,14 +1,21 @@
 import AppKit
 
-let args = Array(CommandLine.arguments.dropFirst())
+let config = Config.parse()
 
-if args.isEmpty {
-    fputs("Usage: pixe <image> [image ...]\n", stderr)
-    fputs("       pixe <directory>\n", stderr)
+if config.cleanThumbs {
+    Config.cleanThumbsDirectory(config.thumbDir)
+    exit(0)
+}
+
+if config.imageArguments.isEmpty {
+    fputs("Usage: pixe [options] <image> [image ...]\n", stderr)
+    fputs("       pixe [options] <directory>\n", stderr)
+    fputs("       pixe --clean-thumbs\n", stderr)
+    fputs("       pixe --help\n", stderr)
     exit(1)
 }
 
-let imageList = ImageList(arguments: args)
+let imageList = ImageList(arguments: config.imageArguments)
 
 if imageList.isEmpty {
     fputs("pixe: no images found\n", stderr)
@@ -20,6 +27,6 @@ let initialMode: ViewMode = imageList.count > 1 ? .thumbnail : .image
 let app = NSApplication.shared
 app.setActivationPolicy(.regular)
 
-let delegate = AppDelegate(imageList: imageList, initialMode: initialMode)
+let delegate = AppDelegate(imageList: imageList, initialMode: initialMode, config: config)
 app.delegate = delegate
 app.run()
