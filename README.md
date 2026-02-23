@@ -1,5 +1,13 @@
 # Pixe
 
+```
+ ┌─┬─┬─┐
+ │█│░│█│  P I X E
+ │░│█│░│  GPU-accelerated image viewer for macOS
+ │█│░│█│
+ └─┴─┴─┘
+```
+
 A fast, GPU-accelerated image viewer for macOS built with Swift and Metal.
 
 Pixe handles thousands of images efficiently with smart memory management, thumbnail caching, and two viewing modes — a grid browser and a full image viewer.
@@ -18,11 +26,35 @@ Pixe handles thousands of images efficiently with smart memory management, thumb
 - macOS 13+ (Ventura)
 - Xcode 15+ / Swift 6.0 toolchain
 
-## Build & Run
+## Installation
+
+### Using Make
 
 ```bash
+git clone https://github.com/riadafridishibly/pixe.git
+cd pixe
+make install
+```
+
+This builds a release binary and installs it to `/usr/local/bin/pixe`. To install to a different location:
+
+```bash
+make install PREFIX=$HOME/.local
+```
+
+### Manual
+
+```bash
+git clone https://github.com/riadafridishibly/pixe.git
+cd pixe
 swift build -c release
-.build/release/pixe ~/Pictures
+cp .build/release/pixe /usr/local/bin/
+```
+
+### Uninstall
+
+```bash
+make uninstall
 ```
 
 ## Usage
@@ -41,6 +73,8 @@ pixe [options] <image|directory> ...
 | `--include <exts>` | Only show these extensions (e.g. `jpg,png`) |
 | `--exclude <exts>` | Hide these extensions (mutually exclusive with `--include`) |
 | `--clean-thumbs` | Delete thumbnail cache and exit |
+| `--debug-mem` | Enable memory profiler event logging to stderr |
+| `-v, --version` | Show version |
 | `-h, --help` | Show help |
 
 SVG and PDF files are excluded by default.
@@ -64,7 +98,11 @@ pixe --no-cache ~/project      # Skip disk cache
 | `h` `j` `k` `l` / Arrow keys | Navigate grid |
 | `Enter` | Open selected image |
 | `g` / `G` | Jump to first / last |
+| `n` / `p` | Page down / up |
 | `Space` / Scroll | Page down / scroll |
+| `d` | Delete image (move to trash) |
+| `o` | Reveal in Finder |
+| `i` | Toggle image info |
 | `f` | Toggle fullscreen |
 | `m` | Memory profiler |
 | `q` | Quit |
@@ -73,10 +111,15 @@ pixe --no-cache ~/project      # Skip disk cache
 
 | Key | Action |
 |---|---|
-| Arrow keys / `n` `p` | Next / previous image |
+| `n` `Space` / `p` | Next / previous image |
+| Arrow keys | Next / previous image |
 | `+` `-` `0` | Zoom in / out / fit |
 | Pinch / scroll | Zoom |
 | Two-finger drag | Pan (when zoomed) |
 | `g` / `G` | First / last image |
+| `d` | Delete image (move to trash) |
+| `o` | Reveal in Finder |
+| `i` | Toggle image info |
 | `f` | Toggle fullscreen |
-| `q` / `Escape` | Back to thumbnails |
+| `m` | Memory profiler |
+| `Enter` / `Escape` / `q` | Back to thumbnails |

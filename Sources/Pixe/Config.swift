@@ -76,6 +76,9 @@ struct Config {
                 excludeExts = parseExtensions(String(a.dropFirst("--exclude=".count)))
             case "--exclude":
                 i += 1; if i < args.count { excludeExts = parseExtensions(args[i]) }
+            case "--version", "-v":
+                printVersion()
+                exit(0)
             case "--help", "-h":
                 printUsage()
                 exit(0)
@@ -130,6 +133,10 @@ struct Config {
             .filter { !$0.isEmpty })
     }
 
+    private static func printVersion() {
+        fputs("pixe \(BuildInfo.version) (\(BuildInfo.commit))\n", stderr)
+    }
+
     private static func printUsage() {
         let usage = """
         Usage: pixe [options] <image|directory> [image|directory ...]
@@ -142,6 +149,7 @@ struct Config {
           --exclude <exts>     Hide these extensions (e.g. --exclude=.svg,.pdf)
           --clean-thumbs       Delete thumbnail cache and exit
           --debug-mem          Enable [mem] event logging to stderr
+          -v, --version        Show version
           -h, --help           Show this help
 
         By default, .svg and .pdf are excluded. --include and --exclude are mutually exclusive.
