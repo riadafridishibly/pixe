@@ -224,6 +224,36 @@ enum ImageLoader {
         return texture
     }
 
+    // MARK: - RAW Detection & Preview
+
+    private static let rawExtensions: Set<String> = [
+        "arw", "cr2", "cr3", "nef", "raf", "orf", "rw2", "dng", "pef", "srw", "x3f"
+    ]
+
+    static func isRawFile(_ path: String) -> Bool {
+        let ext = (path as NSString).pathExtension.lowercased()
+        return rawExtensions.contains(ext)
+    }
+
+    static func loadPreviewTexture(
+        from path: String, device: MTLDevice, commandQueue: MTLCommandQueue
+    ) -> MTLTexture? {
+        let url = URL(fileURLWithPath: path)
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+
+        // Extract embedded JPEG preview — do NOT set CreateThumbnailFromImageAlways
+        // which would force a full RAW decode
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true
+        ]
+        guard let preview = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary),
+              preview.width >= 1024 || preview.height >= 1024 else {
+            return nil
+        }
+        return createTexture(from: preview, device: device, commandQueue: commandQueue, mipmapped: true)
+    }
+
     // MARK: - Utility
 
     static func isImageFile(_ path: String) -> Bool {

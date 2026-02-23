@@ -46,8 +46,13 @@ class Renderer: NSObject, MTKViewDelegate {
     var imageAspect: Float = 1.0
     var viewportSize: SIMD2<Float> = SIMD2(800, 600)
 
-    // Image prefetch cache: path → texture
-    private var prefetchCache: [String: (texture: MTLTexture, aspect: Float)] = [:]
+    // Image prefetch cache: path → texture (with preview flag for RAW two-phase loading)
+    struct PrefetchEntry {
+        let texture: MTLTexture
+        let aspect: Float
+        let isPreview: Bool
+    }
+    private var prefetchCache: [String: PrefetchEntry] = [:]
     private var currentLoadTask: DispatchWorkItem?
 
     init(device: MTLDevice, imageList: ImageList, initialMode: ViewMode, config: Config) {
@@ -161,18 +166,18 @@ class Renderer: NSObject, MTKViewDelegate {
 
     func loadCurrentImage() {
         guard let path = imageList.currentPath else { return }
-
-        // Cancel any in-flight load
         currentLoadTask?.cancel()
 
-        // Check prefetch cache first
+        // Check prefetch cache (instant)
         if let cached = prefetchCache[path] {
             currentTexture = cached.texture
             imageAspect = cached.aspect
             resetView()
             updateWindowTitle()
-            if let view = window?.contentView as? MTKView {
-                view.needsDisplay = true
+            if let view = window?.contentView as? MTKView { view.needsDisplay = true }
+            // If cached entry is a preview, kick off full decode
+            if cached.isPreview {
+                startFullDecode(for: path)
             }
             prefetchAdjacentImages()
             return
@@ -180,25 +185,62 @@ class Renderer: NSObject, MTKViewDelegate {
 
         let device = self.device
         let commandQueue = self.commandQueue
+        let isRaw = ImageLoader.isRawFile(path)
+
         let task = DispatchWorkItem { [weak self] in
+            // Phase 1: For RAW files, try embedded preview first
+            if isRaw {
+                if let preview = ImageLoader.loadPreviewTexture(from: path, device: device, commandQueue: commandQueue) {
+                    let aspect = Float(preview.width) / Float(preview.height)
+                    DispatchQueue.main.async {
+                        guard let self = self, self.imageList.currentPath == path else { return }
+                        self.currentTexture = preview
+                        self.imageAspect = aspect
+                        self.prefetchCache[path] = PrefetchEntry(texture: preview, aspect: aspect, isPreview: true)
+                        self.resetView()
+                        self.updateWindowTitle()
+                        if let view = self.window?.contentView as? MTKView { view.needsDisplay = true }
+                        self.prefetchAdjacentImages()
+                    }
+                }
+            }
+
+            // Phase 2: Full decode (for all images, or as upgrade for RAW)
+            guard let task = self?.currentLoadTask, !task.isCancelled else { return }
             let texture = ImageLoader.loadTexture(from: path, device: device, commandQueue: commandQueue)
             DispatchQueue.main.async {
                 guard let self = self, self.imageList.currentPath == path else { return }
                 self.currentTexture = texture
                 if let texture = texture {
                     self.imageAspect = Float(texture.width) / Float(texture.height)
-                    self.prefetchCache[path] = (texture, self.imageAspect)
+                    self.prefetchCache[path] = PrefetchEntry(texture: texture, aspect: self.imageAspect, isPreview: false)
                 }
-                self.resetView()
-                self.updateWindowTitle()
-                if let view = self.window?.contentView as? MTKView {
-                    view.needsDisplay = true
+                if !isRaw {
+                    self.resetView()
+                    self.updateWindowTitle()
+                    self.prefetchAdjacentImages()
                 }
-                self.prefetchAdjacentImages()
+                if let view = self.window?.contentView as? MTKView { view.needsDisplay = true }
             }
         }
         currentLoadTask = task
         DispatchQueue.global(qos: .userInitiated).async(execute: task)
+    }
+
+    private func startFullDecode(for path: String) {
+        let device = self.device
+        let commandQueue = self.commandQueue
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let texture = ImageLoader.loadTexture(from: path, device: device, commandQueue: commandQueue) else { return }
+            let aspect = Float(texture.width) / Float(texture.height)
+            DispatchQueue.main.async {
+                guard let self = self, self.imageList.currentPath == path else { return }
+                self.currentTexture = texture
+                self.imageAspect = aspect
+                self.prefetchCache[path] = PrefetchEntry(texture: texture, aspect: aspect, isPreview: false)
+                if let view = self.window?.contentView as? MTKView { view.needsDisplay = true }
+            }
+        }
     }
 
     private func prefetchAdjacentImages() {
@@ -227,10 +269,20 @@ class Renderer: NSObject, MTKViewDelegate {
             guard prefetchCache[path] == nil else { continue }
 
             DispatchQueue.global(qos: .utility).async { [weak self] in
-                guard let texture = ImageLoader.loadTexture(from: path, device: device, commandQueue: commandQueue) else { return }
-                let aspect = Float(texture.width) / Float(texture.height)
+                let texture: MTLTexture?
+                let isPreview: Bool
+                if ImageLoader.isRawFile(path),
+                   let preview = ImageLoader.loadPreviewTexture(from: path, device: device, commandQueue: commandQueue) {
+                    texture = preview
+                    isPreview = true
+                } else {
+                    texture = ImageLoader.loadTexture(from: path, device: device, commandQueue: commandQueue)
+                    isPreview = false
+                }
+                guard let tex = texture else { return }
+                let aspect = Float(tex.width) / Float(tex.height)
                 DispatchQueue.main.async {
-                    self?.prefetchCache[path] = (texture, aspect)
+                    self?.prefetchCache[path] = PrefetchEntry(texture: tex, aspect: aspect, isPreview: isPreview)
                 }
             }
         }
