@@ -291,6 +291,120 @@ enum ImageLoader {
         }
     }
 
+    // MARK: - Image Metadata
+
+    static func imageMetadata(path: String) -> [(String, String)] {
+        var result: [(String, String)] = []
+
+        let filename = (path as NSString).lastPathComponent
+        result.append(("File", filename))
+
+        // File size
+        if let attrs = try? FileManager.default.attributesOfItem(atPath: path),
+           let size = attrs[.size] as? UInt64 {
+            result.append(("Size", formatFileSize(size)))
+        }
+
+        let url = URL(fileURLWithPath: path)
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
+            return result
+        }
+
+        let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] ?? [:]
+
+        // Pixel dimensions
+        if let w = properties[kCGImagePropertyPixelWidth] as? Int,
+           let h = properties[kCGImagePropertyPixelHeight] as? Int {
+            result.append(("Dimensions", "\(w) \u{00D7} \(h)"))
+        }
+
+        // DPI
+        if let dpiW = properties[kCGImagePropertyDPIWidth] as? Double {
+            result.append(("DPI", "\(Int(dpiW))"))
+        }
+
+        // Bit depth
+        if let depth = properties[kCGImagePropertyDepth] as? Int {
+            result.append(("Bit Depth", "\(depth)"))
+        }
+
+        // Color space
+        if let colorModel = properties[kCGImagePropertyColorModel] as? String {
+            result.append(("Color Model", colorModel))
+        }
+
+        // TIFF dict — camera make/model
+        let tiff = properties[kCGImagePropertyTIFFDictionary] as? [CFString: Any] ?? [:]
+        var camera = ""
+        if let make = tiff[kCGImagePropertyTIFFMake] as? String {
+            camera = make
+        }
+        if let model = tiff[kCGImagePropertyTIFFModel] as? String {
+            if camera.isEmpty {
+                camera = model
+            } else if !model.hasPrefix(camera) {
+                camera += " " + model
+            } else {
+                camera = model
+            }
+        }
+        if !camera.isEmpty {
+            result.append(("Camera", camera))
+        }
+
+        // Exif dict
+        let exif = properties[kCGImagePropertyExifDictionary] as? [CFString: Any] ?? [:]
+
+        if let lens = exif[kCGImagePropertyExifLensModel] as? String {
+            result.append(("Lens", lens))
+        }
+
+        // Focal length
+        if let fl = exif[kCGImagePropertyExifFocalLength] as? Double {
+            var text = "\(Int(fl))mm"
+            if let fl35 = exif[kCGImagePropertyExifFocalLenIn35mmFilm] as? Int {
+                text += " (\(fl35)mm equiv)"
+            }
+            result.append(("Focal Length", text))
+        }
+
+        // Exposure
+        if let time = exif[kCGImagePropertyExifExposureTime] as? Double {
+            let shutterText: String
+            if time >= 1 {
+                shutterText = "\(time)s"
+            } else {
+                shutterText = "1/\(Int(round(1.0 / time)))s"
+            }
+            result.append(("Shutter", shutterText))
+        }
+
+        if let fNumber = exif[kCGImagePropertyExifFNumber] as? Double {
+            result.append(("Aperture", String(format: "\u{0192}/%.1f", fNumber)))
+        }
+
+        if let isoArray = exif[kCGImagePropertyExifISOSpeedRatings] as? [Int],
+           let iso = isoArray.first {
+            result.append(("ISO", "\(iso)"))
+        }
+
+        if let date = exif[kCGImagePropertyExifDateTimeOriginal] as? String {
+            result.append(("Date", date))
+        }
+
+        return result
+    }
+
+    private static func formatFileSize(_ bytes: UInt64) -> String {
+        if bytes < 1024 {
+            return "\(bytes) B"
+        } else if bytes < 1024 * 1024 {
+            return String(format: "%.1f KB", Double(bytes) / 1024.0)
+        } else {
+            return String(format: "%.1f MB", Double(bytes) / (1024.0 * 1024.0))
+        }
+    }
+
     // MARK: - Utility
 
     static func isImageFile(_ path: String) -> Bool {
