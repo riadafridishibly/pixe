@@ -193,12 +193,7 @@ class Renderer: NSObject, MTKViewDelegate {
             return
         }
 
-        // 2. If a display decode is already in flight for this path, wait for it
-        if prefetchLoading.contains(path) {
-            return
-        }
-
-        // 3. Show thumbnail immediately as placeholder (if available)
+        // 2. Show thumbnail immediately as placeholder (if available)
         if let thumbTex = thumbnailCache?.texture(at: imageList.currentIndex) {
             currentTexture = thumbTex
             imageAspect = thumbnailCache?.aspect(at: imageList.currentIndex) ?? Float(thumbTex.width) / Float(thumbTex.height)
@@ -207,7 +202,14 @@ class Renderer: NSObject, MTKViewDelegate {
             if let view = window?.contentView as? MTKView { view.needsDisplay = true }
         }
 
-        // 3. Background decode at display resolution
+        // 3. If a decode is already in flight for this path, wait for it to complete.
+        // Prefetch completion now promotes it to currentTexture when this path is selected.
+        if prefetchLoading.contains(path) {
+            updateWindowTitle()
+            return
+        }
+
+        // 4. Background decode at display resolution
         // Mark path as loading so prefetchAdjacentImages won't duplicate this decode
         prefetchLoading.insert(path)
 
@@ -282,9 +284,22 @@ class Renderer: NSObject, MTKViewDelegate {
                 }
                 let aspect = Float(tex.width) / Float(tex.height)
                 DispatchQueue.main.async {
-                    self?.prefetchLoading.remove(path)
-                    guard self?.mode == .image else { return }
-                    self?.prefetchCache[path] = PrefetchEntry(texture: tex, aspect: aspect)
+                    guard let self = self else { return }
+                    self.prefetchLoading.remove(path)
+                    guard self.mode == .image else { return }
+                    self.prefetchCache[path] = PrefetchEntry(texture: tex, aspect: aspect)
+
+                    // If user navigated to this image while prefetch was in-flight,
+                    // promote the prefetched texture immediately.
+                    guard self.imageList.currentPath == path else { return }
+                    self.currentTexture = tex
+                    self.imageAspect = aspect
+                    self.resetView()
+                    self.updateWindowTitle()
+                    self.prefetchAdjacentImages()
+                    if let view = self.window?.contentView as? MTKView {
+                        view.needsDisplay = true
+                    }
                 }
             }
         }

@@ -115,8 +115,9 @@ class ThumbnailCache {
         if diskCacheEnabled {
             ensureDirectory(thumbDir)
             loadManifest()
+            let manifestKeysSnapshot = Set(manifest.keys)
             loadQueue.async { [weak self] in
-                self?.cleanOrphanedFiles()
+                self?.cleanOrphanedFiles(manifestKeys: manifestKeysSnapshot)
             }
         }
     }
@@ -321,9 +322,8 @@ class ThumbnailCache {
 
     // MARK: - Orphan Cleanup
 
-    private func cleanOrphanedFiles() {
+    private func cleanOrphanedFiles(manifestKeys: Set<String>) {
         let fm = FileManager.default
-        let manifestKeys = manifest  // value-type snapshot, safe to read here
         guard let subdirs = try? fm.contentsOfDirectory(atPath: thumbDir) else { return }
         for subdir in subdirs {
             let subdirPath = (thumbDir as NSString).appendingPathComponent(subdir)
@@ -334,7 +334,7 @@ class ThumbnailCache {
             for file in files {
                 guard file.hasSuffix(".raw") else { continue }
                 let key = String(file.dropLast(4))  // remove ".raw"
-                if manifestKeys[key] == nil {
+                if !manifestKeys.contains(key) {
                     let filePath = (subdirPath as NSString).appendingPathComponent(file)
                     try? fm.removeItem(atPath: filePath)
                 }
