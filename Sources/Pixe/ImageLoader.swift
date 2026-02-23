@@ -1,5 +1,4 @@
 import Metal
-import MetalKit
 import ImageIO
 import CoreGraphics
 import UniformTypeIdentifiers
@@ -54,14 +53,44 @@ enum ImageLoader {
     }
 
     private static func createTexture(from cgImage: CGImage, device: MTLDevice) -> MTLTexture? {
-        let textureLoader = MTKTextureLoader(device: device)
-        let options: [MTKTextureLoader.Option: Any] = [
-            .textureUsage: MTLTextureUsage.shaderRead.rawValue,
-            .textureStorageMode: MTLStorageMode.private.rawValue,
-            .origin: MTKTextureLoader.Origin.topLeft,
-            .SRGB: false
-        ]
-        return try? textureLoader.newTexture(cgImage: cgImage, options: options)
+        let width = cgImage.width
+        let height = cgImage.height
+        let bytesPerRow = width * 4
+
+        guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(
+                  data: nil,
+                  width: width,
+                  height: height,
+                  bitsPerComponent: 8,
+                  bytesPerRow: bytesPerRow,
+                  space: colorSpace,
+                  bitmapInfo: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
+              ),
+              let data = context.data else {
+            return nil
+        }
+
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .bgra8Unorm,
+            width: width,
+            height: height,
+            mipmapped: false
+        )
+        descriptor.usage = .shaderRead
+        descriptor.storageMode = .shared
+
+        guard let texture = device.makeTexture(descriptor: descriptor) else { return nil }
+        texture.replace(
+            region: MTLRegion(origin: .init(), size: MTLSize(width: width, height: height, depth: 1)),
+            mipmapLevel: 0,
+            withBytes: data,
+            bytesPerRow: bytesPerRow
+        )
+
+        return texture
     }
 
     static func isImageFile(_ path: String) -> Bool {
