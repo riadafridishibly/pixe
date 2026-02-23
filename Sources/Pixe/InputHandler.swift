@@ -10,6 +10,20 @@ class InputHandler {
     }
 
     func handleKeyDown(event: NSEvent, view: MTKView) {
+        guard let renderer = renderer else { return }
+
+        switch renderer.mode {
+        case .thumbnail:
+            handleThumbnailKeyDown(event: event, view: view)
+        case .image:
+            handleImageKeyDown(event: event, view: view)
+        }
+    }
+
+    // MARK: - Thumbnail Mode Keys
+
+    private func handleThumbnailKeyDown(event: NSEvent, view: MTKView) {
+        guard let renderer = renderer else { return }
         guard let chars = event.charactersIgnoringModifiers else { return }
 
         switch chars {
@@ -19,20 +33,87 @@ class InputHandler {
         case "f":
             view.window?.toggleFullScreen(nil)
 
-        // Zoom
+        case "h":
+            renderer.gridLayout.moveLeft()
+            view.needsDisplay = true
+
+        case "j":
+            renderer.gridLayout.moveDown()
+            view.needsDisplay = true
+
+        case "k":
+            renderer.gridLayout.moveUp()
+            view.needsDisplay = true
+
+        case "l":
+            renderer.gridLayout.moveRight()
+            view.needsDisplay = true
+
+        case "g":
+            if event.modifierFlags.contains(.shift) {
+                renderer.gridLayout.goToLast()
+            } else {
+                renderer.gridLayout.goToFirst()
+            }
+            view.needsDisplay = true
+
+        default:
+            handleThumbnailArrowKeys(keyCode: event.keyCode, view: view)
+        }
+    }
+
+    private func handleThumbnailArrowKeys(keyCode: UInt16, view: MTKView) {
+        guard let renderer = renderer else { return }
+
+        switch keyCode {
+        case 123: // Left
+            renderer.gridLayout.moveLeft()
+            view.needsDisplay = true
+        case 124: // Right
+            renderer.gridLayout.moveRight()
+            view.needsDisplay = true
+        case 125: // Down
+            renderer.gridLayout.moveDown()
+            view.needsDisplay = true
+        case 126: // Up
+            renderer.gridLayout.moveUp()
+            view.needsDisplay = true
+        case 36: // Enter/Return
+            renderer.enterImageMode(at: renderer.gridLayout.selectedIndex)
+        default:
+            break
+        }
+    }
+
+    // MARK: - Image Mode Keys
+
+    private func handleImageKeyDown(event: NSEvent, view: MTKView) {
+        guard let renderer = renderer else { return }
+        guard let chars = event.charactersIgnoringModifiers else { return }
+
+        switch chars {
+        case "q":
+            if renderer.hasMultipleImages {
+                renderer.enterThumbnailMode()
+            } else {
+                NSApp.terminate(nil)
+            }
+
+        case "f":
+            view.window?.toggleFullScreen(nil)
+
         case "+", "=":
-            renderer?.zoomBy(factor: 1.25)
+            renderer.zoomBy(factor: 1.25)
             view.needsDisplay = true
 
         case "-":
-            renderer?.zoomBy(factor: 0.8)
+            renderer.zoomBy(factor: 0.8)
             view.needsDisplay = true
 
         case "0":
-            renderer?.resetView()
+            renderer.resetView()
             view.needsDisplay = true
 
-        // Navigation
         case "n", " ":
             navigateNext(view: view)
 
@@ -41,19 +122,27 @@ class InputHandler {
 
         case "g":
             if event.modifierFlags.contains(.shift) {
-                renderer?.imageList.goLast()
+                renderer.imageList.goLast()
             } else {
-                renderer?.imageList.goFirst()
+                renderer.imageList.goFirst()
             }
-            renderer?.loadCurrentImage()
+            renderer.loadCurrentImage()
 
         default:
-            handleArrowKeys(keyCode: event.keyCode, view: view)
+            handleImageArrowKeys(keyCode: event.keyCode, view: view)
         }
     }
 
-    private func handleArrowKeys(keyCode: UInt16, view: MTKView) {
+    private func handleImageArrowKeys(keyCode: UInt16, view: MTKView) {
         switch keyCode {
+        case 53: // Escape
+            if renderer?.hasMultipleImages == true {
+                renderer?.enterThumbnailMode()
+            }
+        case 36: // Enter/Return
+            if renderer?.hasMultipleImages == true {
+                renderer?.enterThumbnailMode()
+            }
         case 123: // Left arrow
             navigatePrevious(view: view)
         case 124: // Right arrow
@@ -76,14 +165,30 @@ class InputHandler {
     // MARK: - Scroll Wheel
 
     func handleScrollWheel(event: NSEvent, view: MTKView) {
+        guard let renderer = renderer else { return }
+
+        switch renderer.mode {
+        case .thumbnail:
+            handleThumbnailScroll(event: event, view: view)
+        case .image:
+            handleImageScroll(event: event, view: view)
+        }
+    }
+
+    private func handleThumbnailScroll(event: NSEvent, view: MTKView) {
+        guard let renderer = renderer else { return }
+        let delta = Float(-event.scrollingDeltaY) * 2.0
+        renderer.gridLayout.scrollBy(delta: delta)
+        view.needsDisplay = true
+    }
+
+    private func handleImageScroll(event: NSEvent, view: MTKView) {
         if event.phase != [] || event.momentumPhase != [] {
-            // Trackpad scroll — pan
             let dx = Float(event.scrollingDeltaX) / Float(view.bounds.width) * 2.0
             let dy = Float(-event.scrollingDeltaY) / Float(view.bounds.height) * 2.0
             renderer?.panBy(dx: dx, dy: dy)
             view.needsDisplay = true
         } else {
-            // Mouse scroll wheel — zoom
             let zoomFactor: Float = 1.0 + Float(event.scrollingDeltaY) * 0.05
             renderer?.zoomBy(factor: zoomFactor)
             view.needsDisplay = true
@@ -93,6 +198,8 @@ class InputHandler {
     // MARK: - Trackpad Gestures
 
     func handleMagnification(gesture: NSMagnificationGestureRecognizer, view: MTKView) {
+        guard renderer?.mode == .image else { return }
+
         switch gesture.state {
         case .began:
             magnificationAnchor = renderer?.scale ?? 1.0
@@ -106,6 +213,8 @@ class InputHandler {
     }
 
     func handlePan(gesture: NSPanGestureRecognizer, view: MTKView) {
+        guard renderer?.mode == .image else { return }
+
         let t = gesture.translation(in: view)
         let dx = Float(t.x) / Float(view.bounds.width) * 2.0
         let dy = Float(-t.y) / Float(view.bounds.height) * 2.0

@@ -17,6 +17,10 @@ enum ShaderSource {
         float4x4 transform;
     };
 
+    struct ColorUniforms {
+        float4 color;
+    };
+
     vertex VertexOut vertexShader(
         VertexIn in [[stage_in]],
         constant Uniforms &uniforms [[buffer(1)]]
@@ -33,6 +37,13 @@ enum ShaderSource {
         sampler texSampler [[sampler(0)]]
     ) {
         return texture.sample(texSampler, in.texCoord);
+    }
+
+    fragment float4 flatColorFragment(
+        VertexOut in [[stage_in]],
+        constant ColorUniforms &colorUniforms [[buffer(0)]]
+    ) {
+        return colorUniforms.color;
     }
     """
 }

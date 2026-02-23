@@ -15,9 +15,11 @@ if imageList.isEmpty {
     exit(1)
 }
 
+let initialMode: ViewMode = imageList.count > 1 ? .thumbnail : .image
+
 let app = NSApplication.shared
 app.setActivationPolicy(.regular)
 
-let delegate = AppDelegate(imageList: imageList)
+let delegate = AppDelegate(imageList: imageList, initialMode: initialMode)
 app.delegate = delegate
 app.run()

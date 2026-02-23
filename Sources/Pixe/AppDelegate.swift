@@ -3,12 +3,14 @@ import MetalKit
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     let imageList: ImageList
+    let initialMode: ViewMode
     var window: ImageWindow!
     var metalView: MetalImageView!
     var renderer: Renderer!
 
-    init(imageList: ImageList) {
+    init(imageList: ImageList, initialMode: ViewMode) {
         self.imageList = imageList
+        self.initialMode = initialMode
         super.init()
     }
 
@@ -21,7 +23,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        renderer = Renderer(device: device, imageList: imageList)
+        renderer = Renderer(device: device, imageList: imageList, initialMode: initialMode)
 
         metalView = MetalImageView(frame: .zero, device: device)
         metalView.delegate = renderer
@@ -32,7 +34,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let inputHandler = InputHandler(renderer: renderer)
         metalView.inputHandler = inputHandler
 
-        renderer.loadCurrentImage()
+        if initialMode == .image {
+            renderer.loadCurrentImage()
+        } else {
+            renderer.updateWindowTitle()
+        }
 
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(metalView)
@@ -46,7 +52,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func setupMenuBar() {
         let mainMenu = NSMenu()
 
-        // App menu
         let appMenuItem = NSMenuItem()
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "About Pixe", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
@@ -55,7 +60,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         appMenuItem.submenu = appMenu
         mainMenu.addItem(appMenuItem)
 
-        // Window menu (required for fullscreen support)
         let windowMenuItem = NSMenuItem()
         let windowMenu = NSMenu(title: "Window")
         windowMenu.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
