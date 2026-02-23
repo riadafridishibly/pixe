@@ -21,6 +21,7 @@ struct Config {
     let thumbSize: Int
     let diskCacheEnabled: Bool
     let cleanThumbs: Bool
+    let debugMemory: Bool
     let extensionFilter: ExtensionFilter
     let imageArguments: [String]
 
@@ -36,6 +37,7 @@ struct Config {
         var thumbSize = defaultThumbSize
         var diskCacheEnabled = true
         var cleanThumbs = false
+        var debugMemory = false
         var imageArguments: [String] = []
         var includeExts: Set<String>? = nil
         var excludeExts: Set<String>? = nil
@@ -64,6 +66,8 @@ struct Config {
                 }
             case "--no-cache":
                 diskCacheEnabled = false
+            case "--debug-mem":
+                debugMemory = true
             case let a where a.hasPrefix("--include="):
                 includeExts = parseExtensions(String(a.dropFirst("--include=".count)))
             case "--include":
@@ -97,6 +101,7 @@ struct Config {
             thumbSize: thumbSize,
             diskCacheEnabled: diskCacheEnabled,
             cleanThumbs: cleanThumbs,
+            debugMemory: debugMemory,
             extensionFilter: extensionFilter,
             imageArguments: imageArguments
         )
@@ -136,6 +141,7 @@ struct Config {
           --include <exts>     Only show these extensions (e.g. --include=.jpg,.png)
           --exclude <exts>     Hide these extensions (e.g. --exclude=.svg,.pdf)
           --clean-thumbs       Delete thumbnail cache and exit
+          --debug-mem          Enable [mem] event logging to stderr
           -h, --help           Show this help
 
         By default, .svg and .pdf are excluded. --include and --exclude are mutually exclusive.

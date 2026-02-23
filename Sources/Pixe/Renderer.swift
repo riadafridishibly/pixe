@@ -41,6 +41,10 @@ class Renderer: NSObject, MTKViewDelegate {
     var thumbnailCache: ThumbnailCache?
     var backingScaleFactor: CGFloat = 2.0
 
+    // Thumbnail uniform buffer
+    private var thumbnailUniformBuffer: MTLBuffer?
+    private var thumbnailUniformCapacity: Int = 0
+
     // Zoom/pan state
     var scale: Float = 1.0
     var translation: SIMD2<Float> = .zero
@@ -66,11 +70,9 @@ class Renderer: NSObject, MTKViewDelegate {
         self.commandQueue = device.makeCommandQueue()!
         self.imageList = imageList
         self.mode = initialMode
-        if let screen = NSScreen.main {
-            let px = screen.frame.size.width * screen.backingScaleFactor
-            let py = screen.frame.size.height * screen.backingScaleFactor
-            self.viewportSize = SIMD2(Float(px), Float(py))
-        }
+        // Conservative default matching 800×600 window at 2× scale.
+        // The real drawable size arrives via mtkView(_:drawableSizeWillChange:).
+        self.viewportSize = SIMD2(1600, 1200)
         super.init()
         setupPipeline()
         setupVertexBuffer()
@@ -191,7 +193,12 @@ class Renderer: NSObject, MTKViewDelegate {
             return
         }
 
-        // 2. Show thumbnail immediately as placeholder (if available)
+        // 2. If a display decode is already in flight for this path, wait for it
+        if prefetchLoading.contains(path) {
+            return
+        }
+
+        // 3. Show thumbnail immediately as placeholder (if available)
         if let thumbTex = thumbnailCache?.texture(at: imageList.currentIndex) {
             currentTexture = thumbTex
             imageAspect = thumbnailCache?.aspect(at: imageList.currentIndex) ?? Float(thumbTex.width) / Float(thumbTex.height)
@@ -210,13 +217,16 @@ class Renderer: NSObject, MTKViewDelegate {
 
         let task = DispatchWorkItem { [weak self] in
             // Check generation: if user navigated away, this decode is stale
-            guard let self = self, self.loadGeneration == generation else { return }
+            guard let self = self, self.loadGeneration == generation else {
+                DispatchQueue.main.async { [weak self] in self?.prefetchLoading.remove(path) }
+                return
+            }
             MemoryProfiler.logEvent("display decode starting: \((path as NSString).lastPathComponent)", device: device)
             let texture = ImageLoader.loadDisplayTexture(from: path, device: device, commandQueue: commandQueue, maxPixelSize: maxPixelSize)
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
                 self.prefetchLoading.remove(path)
-                guard self.imageList.currentPath == path else { return }
+                guard self.mode == .image, self.imageList.currentPath == path else { return }
                 if let texture = texture {
                     self.currentTexture = texture
                     self.imageAspect = Float(texture.width) / Float(texture.height)
@@ -273,6 +283,7 @@ class Renderer: NSObject, MTKViewDelegate {
                 let aspect = Float(tex.width) / Float(tex.height)
                 DispatchQueue.main.async {
                     self?.prefetchLoading.remove(path)
+                    guard self?.mode == .image else { return }
                     self?.prefetchCache[path] = PrefetchEntry(texture: tex, aspect: aspect)
                 }
             }
@@ -482,6 +493,7 @@ class Renderer: NSObject, MTKViewDelegate {
         gridLayout.selectedIndex = imageList.currentIndex
         currentTexture = nil
         currentLoadTask?.cancel()
+        loadGeneration += 1
         let evictedCount = prefetchCache.count
         prefetchCache.removeAll()
         prefetchLoading.removeAll()
@@ -607,17 +619,42 @@ class Renderer: NSObject, MTKViewDelegate {
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
         }
 
-        // Draw visible thumbnails — set shared state once
+        // Draw visible thumbnails — collect uniforms into a shared buffer
         encoder.setRenderPipelineState(pipelineState)
         encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
         encoder.setFragmentSamplerState(samplerState, index: 0)
+
+        // Gather visible items that have textures
+        var visibleItems: [(index: Int, texture: MTLTexture)] = []
         for i in visible {
             guard let texture = cache.texture(at: i) else { continue }
-            let aspect = cache.aspect(at: i)
-            var uniforms = Uniforms(transform: gridLayout.transformForIndex(i, imageAspect: aspect))
-            encoder.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
-            encoder.setFragmentTexture(texture, index: 0)
-            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
+            visibleItems.append((i, texture))
+        }
+
+        if !visibleItems.isEmpty {
+            let uniformStride = MemoryLayout<Uniforms>.stride
+            let needed = visibleItems.count
+
+            // Grow uniform buffer if needed
+            if needed > thumbnailUniformCapacity {
+                let newCapacity = max(needed, thumbnailUniformCapacity * 2, 64)
+                thumbnailUniformBuffer = device.makeBuffer(length: uniformStride * newCapacity, options: .storageModeShared)
+                thumbnailUniformCapacity = newCapacity
+            }
+
+            if let buffer = thumbnailUniformBuffer {
+                let ptr = buffer.contents().bindMemory(to: Uniforms.self, capacity: needed)
+                for (slot, item) in visibleItems.enumerated() {
+                    let aspect = cache.aspect(at: item.index)
+                    ptr[slot] = Uniforms(transform: gridLayout.transformForIndex(item.index, imageAspect: aspect))
+                }
+
+                for (slot, item) in visibleItems.enumerated() {
+                    encoder.setVertexBuffer(buffer, offset: uniformStride * slot, index: 1)
+                    encoder.setFragmentTexture(item.texture, index: 0)
+                    encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
+                }
+            }
         }
 
         encoder.endEncoding()

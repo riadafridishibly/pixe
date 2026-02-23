@@ -1,6 +1,7 @@
 import AppKit
 
 let config = Config.parse()
+MemoryProfiler.enabled = config.debugMemory
 
 if config.cleanThumbs {
     Config.cleanThumbsDirectory(config.thumbDir)
