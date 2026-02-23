@@ -11,6 +11,7 @@ class MetalImageView: MTKView {
         self.colorPixelFormat = .bgra8Unorm
         self.clearColor = MTLClearColor(red: 0.08, green: 0.08, blue: 0.08, alpha: 1.0)
         self.layer?.isOpaque = true
+        (self.layer as? CAMetalLayer)?.colorspace = CGColorSpace(name: CGColorSpace.sRGB)
 
         setupGestureRecognizers()
     }
