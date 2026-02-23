@@ -335,6 +335,7 @@ class Renderer: NSObject, MTKViewDelegate {
     }
 
     func updateInfoBar() {
+        hideImageInfo()
         switch mode {
         case .thumbnail:
             guard !imageList.allPaths.isEmpty else { return }
@@ -360,6 +361,44 @@ class Renderer: NSObject, MTKViewDelegate {
             return "~" + path.dropFirst(home.count)
         }
         return path
+    }
+
+    // MARK: - Reveal in Finder
+
+    func revealInFinder() {
+        let path: String?
+        switch mode {
+        case .thumbnail:
+            let index = gridLayout.selectedIndex
+            guard index < imageList.allPaths.count else { return }
+            path = imageList.allPaths[index]
+        case .image:
+            path = imageList.currentPath
+        }
+        guard let filePath = path else { return }
+        NSWorkspace.shared.selectFile(filePath, inFileViewerRootedAtPath: "")
+    }
+
+    // MARK: - Image Info Panel
+
+    func toggleImageInfo() {
+        let path: String?
+        switch mode {
+        case .thumbnail:
+            let index = gridLayout.selectedIndex
+            guard index < imageList.allPaths.count else { return }
+            path = imageList.allPaths[index]
+        case .image:
+            path = imageList.currentPath
+        }
+        guard let filePath = path else { return }
+        let metadata = ImageLoader.imageMetadata(path: filePath)
+        let text = metadata.map { "\($0.0): \($0.1)" }.joined(separator: "\n")
+        window?.toggleInfoPanel(text)
+    }
+
+    func hideImageInfo() {
+        window?.hideInfoPanel()
     }
 
     // MARK: - Mode Switching

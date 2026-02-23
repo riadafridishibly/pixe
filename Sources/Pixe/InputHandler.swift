@@ -53,6 +53,12 @@ class InputHandler {
             renderer.updateInfoBar()
             view.needsDisplay = true
 
+        case "o":
+            renderer.revealInFinder()
+
+        case "i":
+            renderer.toggleImageInfo()
+
         case "m":
             renderer.generateMemoryReport()
 
@@ -134,6 +140,12 @@ class InputHandler {
 
         case "p":
             navigatePrevious(view: view)
+
+        case "o":
+            renderer.revealInFinder()
+
+        case "i":
+            renderer.toggleImageInfo()
 
         case "m":
             renderer.generateMemoryReport()
