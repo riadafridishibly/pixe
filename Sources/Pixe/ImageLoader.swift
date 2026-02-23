@@ -68,6 +68,14 @@ enum ImageLoader {
         path: String, device: MTLDevice, maxPixelSize: Int
     ) -> ThumbnailResult? {
         return autoreleasepool { () -> ThumbnailResult? in
+            // Fast path: RAW files — extract embedded JPEG preview instead of full decode
+            if isRawFile(path) {
+                if let result = generateRawThumbnailFromPreview(path: path, device: device, maxPixelSize: maxPixelSize) {
+                    return result
+                }
+                // Fall through to full decode if no usable preview
+            }
+
             let url = URL(fileURLWithPath: path)
             guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
 
@@ -80,53 +88,86 @@ enum ImageLoader {
                 return nil
             }
 
-            let aspect = Float(cgImage.width) / Float(cgImage.height)
-            let width = cgImage.width
-            let height = cgImage.height
-            let bytesPerRow = width * 4
-            let dataSize = bytesPerRow * height
-
-            guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) else { return nil }
-            let buffer = device.makeBuffer(length: dataSize, options: .storageModeShared)
-            guard let buffer = buffer else { return nil }
-
-            guard let context = CGContext(
-                data: buffer.contents(),
-                width: width,
-                height: height,
-                bitsPerComponent: 8,
-                bytesPerRow: bytesPerRow,
-                space: colorSpace,
-                bitmapInfo: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
-            ) else {
-                return nil
-            }
-
-            context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
-
-            let descriptor = MTLTextureDescriptor.texture2DDescriptor(
-                pixelFormat: .bgra8Unorm,
-                width: width,
-                height: height,
-                mipmapped: false
-            )
-            descriptor.usage = .shaderRead
-            descriptor.storageMode = .shared
-
-            guard let texture = device.makeTexture(descriptor: descriptor) else { return nil }
-            texture.replace(
-                region: MTLRegion(origin: .init(), size: MTLSize(width: width, height: height, depth: 1)),
-                mipmapLevel: 0,
-                withBytes: buffer.contents(),
-                bytesPerRow: bytesPerRow
-            )
-
-            let rawData = Data(bytes: buffer.contents(), count: dataSize)
-
+            let result = thumbnailResultFromCGImage(cgImage, device: device)
             CGImageSourceRemoveCacheAtIndex(source, 0)
-
-            return ThumbnailResult(texture: texture, rawData: rawData, width: width, height: height, aspect: aspect)
+            return result
         }
+    }
+
+    /// Extract embedded JPEG preview from a RAW file and downsample to thumbnail size.
+    /// Avoids full sensor decode — typically completes in ~10ms vs 1-5s.
+    private static func generateRawThumbnailFromPreview(
+        path: String, device: MTLDevice, maxPixelSize: Int
+    ) -> ThumbnailResult? {
+        let url = URL(fileURLWithPath: path)
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+
+        // Do NOT set CreateThumbnailFromImageAlways — that forces full RAW decode
+        let options: [CFString: Any] = [
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+        ]
+        guard let preview = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary),
+              preview.width >= 16, preview.height >= 16 else {
+            CGImageSourceRemoveCacheAtIndex(source, 0)
+            return nil
+        }
+
+        let result = thumbnailResultFromCGImage(preview, device: device)
+        CGImageSourceRemoveCacheAtIndex(source, 0)
+        return result
+    }
+
+    /// Shared helper: render a CGImage into a ThumbnailResult using a heap buffer
+    /// (not a Metal buffer) so memory is freed immediately via defer.
+    private static func thumbnailResultFromCGImage(
+        _ cgImage: CGImage, device: MTLDevice
+    ) -> ThumbnailResult? {
+        let width = cgImage.width
+        let height = cgImage.height
+        let bytesPerRow = width * 4
+        let dataSize = bytesPerRow * height
+        let aspect = Float(width) / Float(height)
+
+        guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) else { return nil }
+
+        let rawBuffer = UnsafeMutableRawPointer.allocate(byteCount: dataSize, alignment: 16)
+        defer { rawBuffer.deallocate() }
+
+        guard let context = CGContext(
+            data: rawBuffer,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: bytesPerRow,
+            space: colorSpace,
+            bitmapInfo: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
+        ) else {
+            return nil
+        }
+
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .bgra8Unorm,
+            width: width,
+            height: height,
+            mipmapped: false
+        )
+        descriptor.usage = .shaderRead
+        descriptor.storageMode = .shared
+
+        guard let texture = device.makeTexture(descriptor: descriptor) else { return nil }
+        texture.replace(
+            region: MTLRegion(origin: .init(), size: MTLSize(width: width, height: height, depth: 1)),
+            mipmapLevel: 0,
+            withBytes: rawBuffer,
+            bytesPerRow: bytesPerRow
+        )
+
+        let rawData = Data(bytes: rawBuffer, count: dataSize)
+
+        return ThumbnailResult(texture: texture, rawData: rawData, width: width, height: height, aspect: aspect)
     }
 
     /// Create a texture from raw BGRA data loaded from disk cache
