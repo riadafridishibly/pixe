@@ -59,16 +59,30 @@ class Renderer: NSObject, MTKViewDelegate {
         return min(4096, Int(max(viewportSize.x, viewportSize.y)))
     }
 
+    var prefetchDisplayPixelSize: Int {
+        return max(512, min(maxDisplayPixelSize, 2048))
+    }
+
     // Image prefetch cache: path → texture
+    enum DisplayTextureQuality {
+        case prefetch
+        case full
+    }
+
     struct PrefetchEntry {
         let texture: MTLTexture
         let aspect: Float
+        let quality: DisplayTextureQuality
     }
     private var prefetchCache: [String: PrefetchEntry] = [:]
     private var prefetchLoading: Set<String> = []  // paths currently being loaded (prevents double decode)
     private var currentLoadTask: DispatchWorkItem?
     private var loadGeneration: Int = 0  // increments on each navigation, stale tasks bail out
+    private var prefetchGeneration: Int = 0  // increments whenever adjacency set changes
     private var thumbnailSearchQuery: String?
+    private let displayDecodeQueue = DispatchQueue(label: "pixe.display-decode", qos: .userInitiated)
+    private let prefetchDecodeQueue = DispatchQueue(label: "pixe.prefetch-decode", qos: .utility, attributes: .concurrent)
+    private let prefetchDecodeSemaphore = DispatchSemaphore(value: 1)
 
     init(device: MTLDevice, imageList: ImageList, initialMode: ViewMode, config: Config) {
         self.device = device
@@ -225,18 +239,22 @@ class Renderer: NSObject, MTKViewDelegate {
         let generation = loadGeneration
 
         // 1. Check prefetch cache (instant — display-quality)
+        var showedPrefetchTexture = false
         if let cached = prefetchCache[path] {
             currentTexture = cached.texture
             imageAspect = cached.aspect
+            showedPrefetchTexture = true
             resetView()
             updateWindowTitle()
             if let view = window?.contentView as? MTKView { view.needsDisplay = true }
-            prefetchAdjacentImages()
-            return
+            if cached.quality == .full {
+                prefetchAdjacentImages()
+                return
+            }
         }
 
         // 2. Show thumbnail immediately as placeholder (if available)
-        if let thumbTex = thumbnailCache?.texture(at: imageList.currentIndex) {
+        if !showedPrefetchTexture, let thumbTex = thumbnailCache?.texture(at: imageList.currentIndex) {
             currentTexture = thumbTex
             imageAspect = thumbnailCache?.aspect(at: imageList.currentIndex) ?? Float(thumbTex.width) / Float(thumbTex.height)
             resetView()
@@ -258,15 +276,23 @@ class Renderer: NSObject, MTKViewDelegate {
         let device = self.device
         let commandQueue = self.commandQueue
         let maxPixelSize = self.maxDisplayPixelSize
+        let rawPreviewMinLongSide = max(1536, Int(Double(maxPixelSize) * 0.9))
 
-        let task = DispatchWorkItem { [weak self] in
+        var task: DispatchWorkItem!
+        task = DispatchWorkItem { [weak self] in
             // Check generation: if user navigated away, this decode is stale
-            guard let self = self, self.loadGeneration == generation else {
+            guard let self = self, !task.isCancelled, self.loadGeneration == generation else {
                 DispatchQueue.main.async { [weak self] in self?.prefetchLoading.remove(path) }
                 return
             }
             MemoryProfiler.logEvent("display decode starting: \((path as NSString).lastPathComponent)", device: device)
-            let texture = ImageLoader.loadDisplayTexture(from: path, device: device, commandQueue: commandQueue, maxPixelSize: maxPixelSize)
+            let texture = ImageLoader.loadDisplayTexture(
+                from: path,
+                device: device,
+                commandQueue: commandQueue,
+                maxPixelSize: maxPixelSize,
+                minRawPreviewLongSide: rawPreviewMinLongSide
+            )
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
                 self.prefetchLoading.remove(path)
@@ -274,7 +300,7 @@ class Renderer: NSObject, MTKViewDelegate {
                 if let texture = texture {
                     self.currentTexture = texture
                     self.imageAspect = Float(texture.width) / Float(texture.height)
-                    self.prefetchCache[path] = PrefetchEntry(texture: texture, aspect: self.imageAspect)
+                    self.prefetchCache[path] = PrefetchEntry(texture: texture, aspect: self.imageAspect, quality: .full)
                     MemoryProfiler.logEvent("display decode done → prefetch [\(self.prefetchCache.count) entries]", device: device)
                 }
                 self.resetView()
@@ -284,13 +310,31 @@ class Renderer: NSObject, MTKViewDelegate {
             }
         }
         currentLoadTask = task
-        DispatchQueue.global(qos: .userInitiated).async(execute: task)
+        displayDecodeQueue.async(execute: task)
+    }
+
+    private func currentAndAdjacentPaths() -> Set<String> {
+        let count = imageList.count
+        guard count > 0 else { return [] }
+
+        let currentIdx = imageList.currentIndex
+        if count == 1 {
+            return [imageList.allPaths[currentIdx]]
+        }
+
+        let adjacentIndices = [
+            (currentIdx + 1) % count,
+            (currentIdx - 1 + count) % count
+        ]
+        return Set(([currentIdx] + adjacentIndices).map { imageList.allPaths[$0] })
     }
 
     private func prefetchAdjacentImages() {
         let currentIdx = imageList.currentIndex
         let count = imageList.count
         guard count > 1 else { return }
+        prefetchGeneration += 1
+        let generation = prefetchGeneration
 
         let adjacentIndices = [
             (currentIdx + 1) % count,
@@ -311,25 +355,70 @@ class Renderer: NSObject, MTKViewDelegate {
 
         let device = self.device
         let commandQueue = self.commandQueue
-        let maxPixelSize = self.maxDisplayPixelSize
+        let maxPixelSize = self.prefetchDisplayPixelSize
 
         for idx in adjacentIndices {
             let path = imageList.allPaths[idx]
             guard prefetchCache[path] == nil, !prefetchLoading.contains(path) else { continue }
             prefetchLoading.insert(path)
 
-            DispatchQueue.global(qos: .utility).async { [weak self] in
-                let texture = ImageLoader.loadDisplayTexture(from: path, device: device, commandQueue: commandQueue, maxPixelSize: maxPixelSize)
+            prefetchDecodeQueue.async { [weak self] in
+                guard let self = self else { return }
+                let shouldStart = DispatchQueue.main.sync { () -> Bool in
+                    guard self.mode == .image else {
+                        self.prefetchLoading.remove(path)
+                        return false
+                    }
+                    guard self.prefetchGeneration == generation else {
+                        self.prefetchLoading.remove(path)
+                        return false
+                    }
+                    guard self.currentAndAdjacentPaths().contains(path) else {
+                        self.prefetchLoading.remove(path)
+                        return false
+                    }
+                    return true
+                }
+                guard shouldStart else { return }
+
+                self.prefetchDecodeSemaphore.wait()
+                defer { self.prefetchDecodeSemaphore.signal() }
+
+                let shouldContinue = DispatchQueue.main.sync { () -> Bool in
+                    guard self.mode == .image else {
+                        self.prefetchLoading.remove(path)
+                        return false
+                    }
+                    guard self.prefetchGeneration == generation else {
+                        self.prefetchLoading.remove(path)
+                        return false
+                    }
+                    guard self.currentAndAdjacentPaths().contains(path) else {
+                        self.prefetchLoading.remove(path)
+                        return false
+                    }
+                    return true
+                }
+                guard shouldContinue else { return }
+
+                let texture = ImageLoader.loadDisplayTexture(
+                    from: path,
+                    device: device,
+                    commandQueue: commandQueue,
+                    maxPixelSize: maxPixelSize,
+                    minRawPreviewLongSide: 16
+                )
                 guard let tex = texture else {
-                    DispatchQueue.main.async { self?.prefetchLoading.remove(path) }
+                    DispatchQueue.main.async { self.prefetchLoading.remove(path) }
                     return
                 }
                 let aspect = Float(tex.width) / Float(tex.height)
                 DispatchQueue.main.async {
-                    guard let self = self else { return }
                     self.prefetchLoading.remove(path)
                     guard self.mode == .image else { return }
-                    self.prefetchCache[path] = PrefetchEntry(texture: tex, aspect: aspect)
+                    guard self.prefetchGeneration == generation else { return }
+                    guard self.currentAndAdjacentPaths().contains(path) else { return }
+                    self.prefetchCache[path] = PrefetchEntry(texture: tex, aspect: aspect, quality: .prefetch)
 
                     // If user navigated to this image while prefetch was in-flight,
                     // promote the prefetched texture immediately.
@@ -338,10 +427,11 @@ class Renderer: NSObject, MTKViewDelegate {
                     self.imageAspect = aspect
                     self.resetView()
                     self.updateWindowTitle()
-                    self.prefetchAdjacentImages()
                     if let view = self.window?.contentView as? MTKView {
                         view.needsDisplay = true
                     }
+                    // Upgrade this prefetched texture to full display quality in background.
+                    self.loadCurrentImage()
                 }
             }
         }
@@ -585,6 +675,7 @@ class Renderer: NSObject, MTKViewDelegate {
         currentTexture = nil
         currentLoadTask?.cancel()
         loadGeneration += 1
+        prefetchGeneration += 1
         let evictedCount = prefetchCache.count
         prefetchCache.removeAll()
         prefetchLoading.removeAll()

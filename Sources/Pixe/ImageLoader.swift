@@ -10,11 +10,21 @@ enum ImageLoader {
     /// Load an image at display resolution. RAW files use embedded preview;
     /// non-RAW files use ImageIO downsampling to maxPixelSize.
     static func loadDisplayTexture(
-        from path: String, device: MTLDevice, commandQueue: MTLCommandQueue, maxPixelSize: Int = 4096
+        from path: String,
+        device: MTLDevice,
+        commandQueue: MTLCommandQueue,
+        maxPixelSize: Int = 4096,
+        minRawPreviewLongSide: Int? = nil
     ) -> MTLTexture? {
         if isRawFile(path) {
             // Use embedded JPEG preview — no CIImage/CIContext Metal leak
-            if let preview = loadPreviewTexture(from: path, device: device, maxPixelSize: maxPixelSize) {
+            let requiredPreviewLongSide = minRawPreviewLongSide ?? max(1536, Int(Double(maxPixelSize) * 0.9))
+            if let preview = loadPreviewTexture(
+                from: path,
+                device: device,
+                maxPixelSize: maxPixelSize,
+                minLongSide: requiredPreviewLongSide
+            ) {
                 return preview
             }
             // Fallback: decode RAW at reduced resolution via ImageIO
@@ -304,7 +314,7 @@ enum ImageLoader {
     }
 
     static func loadPreviewTexture(
-        from path: String, device: MTLDevice, maxPixelSize: Int
+        from path: String, device: MTLDevice, maxPixelSize: Int, minLongSide: Int
     ) -> MTLTexture? {
         return autoreleasepool { () -> MTLTexture? in
             let url = URL(fileURLWithPath: path)
@@ -320,8 +330,7 @@ enum ImageLoader {
                 return nil
             }
             let longSide = max(preview.width, preview.height)
-            let requiredLongSide = max(1536, Int(Double(maxPixelSize) * 0.9))
-            guard longSide >= requiredLongSide else {
+            guard longSide >= minLongSide else {
                 CGImageSourceRemoveCacheAtIndex(source, 0)
                 return nil
             }
