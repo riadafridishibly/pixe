@@ -43,8 +43,11 @@ class Renderer: NSObject, MTKViewDelegate {
     var backingScaleFactor: CGFloat = 2.0
 
     // Thumbnail uniform buffer
-    private var thumbnailUniformBuffer: MTLBuffer?
+    private let thumbnailFramesInFlight = 3
+    private let thumbnailInFlightSemaphore = DispatchSemaphore(value: 3)
+    private var thumbnailUniformBuffers: [MTLBuffer] = []
     private var thumbnailUniformCapacity: Int = 0
+    private var thumbnailFrameSlot: Int = 0
 
     // Zoom/pan state
     var scale: Float = 1.0
@@ -723,25 +726,49 @@ class Renderer: NSObject, MTKViewDelegate {
             let uniformStride = MemoryLayout<Uniforms>.stride
             let needed = visibleItems.count
 
-            // Grow uniform buffer if needed
-            if needed > thumbnailUniformCapacity {
+            // Prevent CPU from rewriting a uniform buffer the GPU is still reading.
+            thumbnailInFlightSemaphore.wait()
+
+            if needed > thumbnailUniformCapacity || thumbnailUniformBuffers.count != thumbnailFramesInFlight {
                 let newCapacity = max(needed, thumbnailUniformCapacity * 2, 64)
-                thumbnailUniformBuffer = device.makeBuffer(length: uniformStride * newCapacity, options: .storageModeShared)
-                thumbnailUniformCapacity = newCapacity
+                var newBuffers: [MTLBuffer] = []
+                newBuffers.reserveCapacity(thumbnailFramesInFlight)
+                for _ in 0..<thumbnailFramesInFlight {
+                    guard let buffer = device.makeBuffer(length: uniformStride * newCapacity, options: .storageModeShared) else {
+                        newBuffers.removeAll()
+                        break
+                    }
+                    newBuffers.append(buffer)
+                }
+                if newBuffers.count == thumbnailFramesInFlight {
+                    thumbnailUniformBuffers = newBuffers
+                    thumbnailUniformCapacity = newCapacity
+                } else {
+                    thumbnailInFlightSemaphore.signal()
+                    encoder.endEncoding()
+                    commandBuffer.present(drawable)
+                    commandBuffer.commit()
+                    return
+                }
             }
 
-            if let buffer = thumbnailUniformBuffer {
-                let ptr = buffer.contents().bindMemory(to: Uniforms.self, capacity: needed)
-                for (slot, item) in visibleItems.enumerated() {
-                    let aspect = cache.aspect(at: item.index)
-                    ptr[slot] = Uniforms(transform: gridLayout.transformForIndex(item.index, imageAspect: aspect))
-                }
+            let frameSlot = thumbnailFrameSlot
+            thumbnailFrameSlot = (thumbnailFrameSlot + 1) % thumbnailFramesInFlight
+            let buffer = thumbnailUniformBuffers[frameSlot]
+            commandBuffer.addCompletedHandler { [thumbnailInFlightSemaphore] _ in
+                thumbnailInFlightSemaphore.signal()
+            }
 
-                for (slot, item) in visibleItems.enumerated() {
-                    encoder.setVertexBuffer(buffer, offset: uniformStride * slot, index: 1)
-                    encoder.setFragmentTexture(item.texture, index: 0)
-                    encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
-                }
+            let ptr = buffer.contents().bindMemory(to: Uniforms.self, capacity: needed)
+            for (slot, item) in visibleItems.enumerated() {
+                let aspect = cache.aspect(at: item.index)
+                ptr[slot] = Uniforms(transform: gridLayout.transformForIndex(item.index, imageAspect: aspect))
+            }
+
+            for (slot, item) in visibleItems.enumerated() {
+                encoder.setVertexBuffer(buffer, offset: uniformStride * slot, index: 1)
+                encoder.setFragmentTexture(item.texture, index: 0)
+                encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
             }
         }
 
