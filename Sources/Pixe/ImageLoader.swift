@@ -146,6 +146,7 @@ enum ImageLoader {
             return nil
         }
 
+        context.setBlendMode(.copy)
         context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
 
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(
@@ -213,6 +214,7 @@ enum ImageLoader {
             return nil
         }
 
+        context.setBlendMode(.copy)
         context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
 
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(
@@ -266,6 +268,7 @@ enum ImageLoader {
             return nil
         }
 
+        context.setBlendMode(.copy)
         context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
 
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(
