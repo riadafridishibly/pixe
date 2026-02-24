@@ -266,7 +266,7 @@ class Renderer: NSObject, MTKViewDelegate {
         }
 
         // 3. If a decode is already in flight for this path, wait for it to complete.
-        // Prefetch completion now promotes it to currentTexture when this path is selected.
+        // Prefetch completion promotes it to currentTexture when this path is current.
         if prefetchLoading.contains(path) {
             updateWindowTitle()
             return
@@ -422,13 +422,17 @@ class Renderer: NSObject, MTKViewDelegate {
                 DispatchQueue.main.async {
                     self.prefetchLoading.remove(path)
                     guard self.mode == .image else { return }
-                    guard self.prefetchGeneration == generation else { return }
-                    guard self.currentAndAdjacentPaths().contains(path) else { return }
+
+                    let isCurrent = self.imageList.currentPath == path
+                    let isRelevant = self.prefetchGeneration == generation
+                        && self.currentAndAdjacentPaths().contains(path)
+
+                    guard isCurrent || isRelevant else { return }
+
                     self.prefetchCache[path] = PrefetchEntry(texture: tex, aspect: aspect, quality: .prefetch)
 
-                    // If user navigated to this image while prefetch was in-flight,
-                    // promote the prefetched texture immediately.
-                    guard self.imageList.currentPath == path else { return }
+                    // Promote to current texture if this is the image the user is viewing.
+                    guard isCurrent else { return }
                     self.currentTexture = tex
                     self.imageAspect = aspect
                     self.resetView()
