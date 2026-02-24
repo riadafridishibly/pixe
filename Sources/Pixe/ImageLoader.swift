@@ -58,7 +58,7 @@ enum ImageLoader {
 
     struct ThumbnailResult {
         let texture: MTLTexture
-        let rawData: Data
+        let cacheData: Data
         let width: Int
         let height: Int
         let aspect: Float
@@ -165,17 +165,55 @@ enum ImageLoader {
             bytesPerRow: bytesPerRow
         )
 
-        let rawData = Data(bytes: rawBuffer, count: dataSize)
+        guard let cacheData = compressCGImageToJPEG(cgImage, quality: 0.85) else { return nil }
 
-        return ThumbnailResult(texture: texture, rawData: rawData, width: width, height: height, aspect: aspect)
+        return ThumbnailResult(texture: texture, cacheData: cacheData, width: width, height: height, aspect: aspect)
     }
 
-    /// Create a texture from raw BGRA data loaded from disk cache
-    static func textureFromRawData(
-        _ data: Data, width: Int, height: Int, device: MTLDevice
-    ) -> MTLTexture? {
+    /// Compress a CGImage to JPEG data in memory for disk caching.
+    private static func compressCGImageToJPEG(_ image: CGImage, quality: CGFloat) -> Data? {
+        let data = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(data as CFMutableData, "public.jpeg" as CFString, 1, nil) else {
+            return nil
+        }
+        let options: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: quality]
+        CGImageDestinationAddImage(dest, image, options as CFDictionary)
+        guard CGImageDestinationFinalize(dest) else { return nil }
+        return data as Data
+    }
+
+    /// Create a texture from JPEG data loaded from disk cache.
+    static func textureFromJPEGData(
+        _ data: Data, device: MTLDevice
+    ) -> (texture: MTLTexture, width: Int, height: Int)? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+            return nil
+        }
+
+        let width = cgImage.width
+        let height = cgImage.height
         let bytesPerRow = width * 4
-        guard data.count == bytesPerRow * height else { return nil }
+        let dataSize = bytesPerRow * height
+
+        guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) else { return nil }
+
+        let rawBuffer = UnsafeMutableRawPointer.allocate(byteCount: dataSize, alignment: 16)
+        defer { rawBuffer.deallocate() }
+
+        guard let context = CGContext(
+            data: rawBuffer,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: bytesPerRow,
+            space: colorSpace,
+            bitmapInfo: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
+        ) else {
+            return nil
+        }
+
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
 
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: .bgra8Unorm,
@@ -187,15 +225,14 @@ enum ImageLoader {
         descriptor.storageMode = .shared
 
         guard let texture = device.makeTexture(descriptor: descriptor) else { return nil }
-        data.withUnsafeBytes { ptr in
-            texture.replace(
-                region: MTLRegion(origin: .init(), size: MTLSize(width: width, height: height, depth: 1)),
-                mipmapLevel: 0,
-                withBytes: ptr.baseAddress!,
-                bytesPerRow: bytesPerRow
-            )
-        }
-        return texture
+        texture.replace(
+            region: MTLRegion(origin: .init(), size: MTLSize(width: width, height: height, depth: 1)),
+            mipmapLevel: 0,
+            withBytes: rawBuffer,
+            bytesPerRow: bytesPerRow
+        )
+
+        return (texture: texture, width: width, height: height)
     }
 
     // MARK: - Shared Texture (no staging buffer)

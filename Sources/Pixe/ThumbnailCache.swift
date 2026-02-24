@@ -96,7 +96,7 @@ class ThumbnailCache {
 
     // Concurrency
     private let loadQueue = DispatchQueue(label: "pixe.thumbnail", qos: .utility, attributes: .concurrent)
-    private let loadSemaphore = DispatchSemaphore(value: 4)
+    private let loadSemaphore = DispatchSemaphore(value: 8)
     private var currentGeneration: Int = 0
     private var currentPrefetchRange: Range<Int> = 0..<0
     private let stateLock = NSLock()
@@ -188,7 +188,7 @@ class ThumbnailCache {
                 let cacheKey = diskEnabled ? Self.cacheKey(for: path) : nil
                 var texture: MTLTexture?
                 var aspect: Float = 1.0
-                var rawData: Data?
+                var cacheData: Data?
                 var manifestEntry: ManifestEntry?
 
                 // Try disk cache first
@@ -196,8 +196,9 @@ class ThumbnailCache {
                     if let entry = manifestSnapshot[key] {
                         if let diskPath = self?.diskPath(for: key),
                            let data = try? Data(contentsOf: URL(fileURLWithPath: diskPath)),
-                           let tex = ImageLoader.textureFromRawData(data, width: entry.width, height: entry.height, device: device) {
-                            texture = tex
+                           let result = ImageLoader.textureFromJPEGData(data, device: device),
+                           result.width == entry.width, result.height == entry.height {
+                            texture = result.texture
                             aspect = entry.aspect
                         }
                     }
@@ -210,7 +211,7 @@ class ThumbnailCache {
                     ) {
                         texture = result.texture
                         aspect = result.aspect
-                        rawData = result.rawData
+                        cacheData = result.cacheData
                         let mtime = Self.fileModTime(path)
                         manifestEntry = ManifestEntry(width: result.width, height: result.height, aspect: result.aspect, mtime: mtime)
                     }
@@ -228,12 +229,12 @@ class ThumbnailCache {
                         self.lru.touch(index)
 
                         // Write to disk cache in background
-                        if diskEnabled, let rawData = rawData, let key = cacheKey, let entry = manifestEntry {
+                        if diskEnabled, let cacheData = cacheData, let key = cacheKey, let entry = manifestEntry {
                             self.manifest[key] = entry
                             self.manifestDirty = true
                             let diskPath = self.diskPath(for: key)
                             self.manifestQueue.async {
-                                self.writeDiskCache(data: rawData, to: diskPath)
+                                self.writeDiskCache(data: cacheData, to: diskPath)
                             }
                         }
 
@@ -302,7 +303,7 @@ class ThumbnailCache {
     private func diskPath(for key: String) -> String {
         let subdir = (thumbDir as NSString).appendingPathComponent(String(key.prefix(2)))
         ensureDirectory(subdir)
-        return (subdir as NSString).appendingPathComponent(key + ".raw")
+        return (subdir as NSString).appendingPathComponent(key + ".jpg")
     }
 
     private func manifestEntry(for key: String) -> ManifestEntry? {
@@ -332,11 +333,15 @@ class ThumbnailCache {
                   subdir.count == 2 else { continue }
             guard let files = try? fm.contentsOfDirectory(atPath: subdirPath) else { continue }
             for file in files {
-                guard file.hasSuffix(".raw") else { continue }
-                let key = String(file.dropLast(4))  // remove ".raw"
-                if !manifestKeys.contains(key) {
-                    let filePath = (subdirPath as NSString).appendingPathComponent(file)
+                let filePath = (subdirPath as NSString).appendingPathComponent(file)
+                if file.hasSuffix(".raw") {
+                    // Legacy format — always remove
                     try? fm.removeItem(atPath: filePath)
+                } else if file.hasSuffix(".jpg") {
+                    let key = String(file.dropLast(4))  // remove ".jpg"
+                    if !manifestKeys.contains(key) {
+                        try? fm.removeItem(atPath: filePath)
+                    }
                 }
             }
         }
