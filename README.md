@@ -70,6 +70,7 @@ pixe [options] <image|directory> ...
 | `--thumb-dir <path>` | Thumbnail cache directory (default: `~/.cache/pixe/thumbs`) |
 | `--thumb-size <int>` | Max thumbnail size in pixels (default: 256) |
 | `--no-cache` | Disable disk thumbnail cache |
+| `--walker <strategy>` | Traversal strategy: `auto`, `fd`, `readdir`, `foundation` |
 | `--include <exts>` | Only show these extensions (e.g. `jpg,png`) |
 | `--exclude <exts>` | Hide these extensions (mutually exclusive with `--include`) |
 | `--clean-thumbs` | Delete thumbnail cache and exit |

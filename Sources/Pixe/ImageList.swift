@@ -1,5 +1,4 @@
 import Foundation
-import UniformTypeIdentifiers
 
 class ImageList {
     private var paths: [String] = []
@@ -59,58 +58,85 @@ class ImageList {
         directoryArgs = []
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            for dir in dirs {
-                self?.enumerateDirectoryAsync(at: dir.path, config: dir.config)
+            guard let self = self else { return }
+            let traversalStart = DispatchTime.now()
+
+            if self.configuredWalkStrategyIsUnavailable(dirs.first?.config.walkStrategy) {
+                DispatchQueue.main.async { [weak self] in
+                    self?.sortAndReindex()
+                }
+                return
             }
+
+            var totalFound = 0
+            var perStrategyDirCount: [String: Int] = [:]
+            for dir in dirs {
+                if let result = self.enumerateDirectoryAsync(at: dir.path, config: dir.config) {
+                    totalFound += result.fileCount
+                    perStrategyDirCount[result.strategy, default: 0] += 1
+                }
+            }
+
+            let strategySummary = perStrategyDirCount
+                .sorted { $0.key < $1.key }
+                .map { "\($0.key):\($0.value)" }
+                .joined(separator: ",")
+            MemoryProfiler.logPerf(
+                String(
+                    format: "traverse total %.1fms dirs=%d files=%d strategies=[%@]",
+                    elapsedMs(since: traversalStart),
+                    dirs.count,
+                    totalFound,
+                    strategySummary
+                )
+            )
+
             DispatchQueue.main.async { [weak self] in
                 self?.sortAndReindex()
             }
         }
     }
 
-    private func enumerateDirectoryAsync(at path: String, config: Config) {
-        let fileManager = FileManager.default
-        let url = URL(fileURLWithPath: path)
-        let keys: [URLResourceKey] = [.isRegularFileKey, .contentTypeKey]
-        guard let enumerator = fileManager.enumerator(
-            at: url,
-            includingPropertiesForKeys: keys,
-            options: [.skipsHiddenFiles, .skipsPackageDescendants]
-        ) else { return }
+    private func configuredWalkStrategyIsUnavailable(_ strategy: DirectoryWalkStrategy?) -> Bool {
+        guard let strategy, strategy != .auto else { return false }
+        guard !ImageDirectoryWalker.isAvailable(strategy) else { return false }
+        fputs("pixe: traversal strategy '\(strategy.rawValue)' is unavailable\n", stderr)
+        return true
+    }
 
-        var staging: [String] = []
-        var lastFlush = DispatchTime.now()
-        let batchSize = 100
-        let flushInterval: UInt64 = 200 * 1_000_000 // 200ms in nanoseconds
+    private func enumerateDirectoryAsync(at path: String, config: Config) -> (strategy: String, fileCount: Int)? {
+        let pendingMainBatches = DispatchGroup()
+        let walkStart = DispatchTime.now()
+        var foundCount = 0
 
-        for case let fileURL as URL in enumerator {
-            guard let values = try? fileURL.resourceValues(forKeys: Set(keys)),
-                  let isFile = values.isRegularFile, isFile,
-                  let contentType = values.contentType,
-                  contentType.conforms(to: .image) else {
-                continue
-            }
-            guard config.extensionFilter.accepts(fileURL.path) else { continue }
-            staging.append(fileURL.path)
-
-            let elapsed = DispatchTime.now().uptimeNanoseconds - lastFlush.uptimeNanoseconds
-            if staging.count >= batchSize || elapsed >= flushInterval {
-                let batch = staging
-                staging = []
-                lastFlush = DispatchTime.now()
-                DispatchQueue.main.sync { [weak self] in
-                    self?.flushBatch(batch)
-                }
-            }
-        }
-
-        // Flush remaining
-        if !staging.isEmpty {
-            let batch = staging
-            DispatchQueue.main.sync { [weak self] in
+        guard let strategy = ImageDirectoryWalker.walk(at: path, config: config, emitBatch: { [weak self] batch in
+            guard !batch.isEmpty else { return }
+            foundCount += batch.count
+            pendingMainBatches.enter()
+            DispatchQueue.main.async { [weak self] in
+                defer { pendingMainBatches.leave() }
                 self?.flushBatch(batch)
             }
+        }) else {
+            if config.walkStrategy == .auto {
+                fputs("pixe: failed to traverse directory: \(path)\n", stderr)
+            } else {
+                fputs("pixe: failed to traverse directory with strategy '\(config.walkStrategy.rawValue)': \(path)\n", stderr)
+            }
+            return nil
         }
+
+        pendingMainBatches.wait()
+        MemoryProfiler.logPerf(
+            String(
+                format: "traverse %.1fms strategy=%@ files=%d path=%@",
+                elapsedMs(since: walkStart),
+                strategy,
+                foundCount,
+                path
+            )
+        )
+        return (strategy: strategy, fileCount: foundCount)
     }
 
     private func flushBatch(_ batch: [String]) {
@@ -131,6 +157,10 @@ class ImageList {
         }
         isEnumerating = false
         onEnumerationComplete?(paths.count)
+    }
+
+    private func elapsedMs(since start: DispatchTime) -> Double {
+        Double(DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds) / 1_000_000
     }
 
     func goNext() {

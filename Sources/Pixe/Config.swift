@@ -16,12 +16,20 @@ enum ExtensionFilter {
     }
 }
 
+enum DirectoryWalkStrategy: String {
+    case auto
+    case fd
+    case readdir
+    case foundation
+}
+
 struct Config {
     let thumbDir: String
     let thumbSize: Int
     let diskCacheEnabled: Bool
     let cleanThumbs: Bool
     let debugMemory: Bool
+    let walkStrategy: DirectoryWalkStrategy
     let extensionFilter: ExtensionFilter
     let imageArguments: [String]
 
@@ -38,6 +46,7 @@ struct Config {
         var diskCacheEnabled = true
         var cleanThumbs = false
         var debugMemory = false
+        var walkStrategy: DirectoryWalkStrategy = .auto
         var imageArguments: [String] = []
         var includeExts: Set<String>? = nil
         var excludeExts: Set<String>? = nil
@@ -68,6 +77,25 @@ struct Config {
                 diskCacheEnabled = false
             case "--debug-mem":
                 debugMemory = true
+            case let a where a.hasPrefix("--walker="):
+                let value = String(a.dropFirst("--walker=".count)).lowercased()
+                guard let parsed = DirectoryWalkStrategy(rawValue: value) else {
+                    fputs("pixe: invalid --walker value '\(value)' (expected: auto|fd|readdir|foundation)\n", stderr)
+                    exit(1)
+                }
+                walkStrategy = parsed
+            case "--walker":
+                i += 1
+                guard i < args.count else {
+                    fputs("pixe: --walker requires a value (auto|fd|readdir|foundation)\n", stderr)
+                    exit(1)
+                }
+                let value = args[i].lowercased()
+                guard let parsed = DirectoryWalkStrategy(rawValue: value) else {
+                    fputs("pixe: invalid --walker value '\(value)' (expected: auto|fd|readdir|foundation)\n", stderr)
+                    exit(1)
+                }
+                walkStrategy = parsed
             case let a where a.hasPrefix("--include="):
                 includeExts = parseExtensions(String(a.dropFirst("--include=".count)))
             case "--include":
@@ -105,6 +133,7 @@ struct Config {
             diskCacheEnabled: diskCacheEnabled,
             cleanThumbs: cleanThumbs,
             debugMemory: debugMemory,
+            walkStrategy: walkStrategy,
             extensionFilter: extensionFilter,
             imageArguments: imageArguments
         )
@@ -145,6 +174,7 @@ struct Config {
           --thumb-dir <path>   Thumbnail cache directory (default: ~/.cache/pixe/thumbs)
           --thumb-size <int>   Max thumbnail pixel size (default: 256)
           --no-cache           Disable disk thumbnail cache
+          --walker <strategy>  Traversal strategy: auto|fd|readdir|foundation (default: auto)
           --include <exts>     Only show these extensions (e.g. --include=.jpg,.png)
           --exclude <exts>     Hide these extensions (e.g. --exclude=.svg,.pdf)
           --clean-thumbs       Delete thumbnail cache and exit
