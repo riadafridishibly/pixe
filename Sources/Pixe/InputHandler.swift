@@ -268,6 +268,8 @@ class InputHandler {
         guard let renderer = renderer else { return }
         guard let chars = event.charactersIgnoringModifiers else { return }
 
+        let panStep: Float = 0.1
+
         switch chars {
         case "q":
             if renderer.hasMultipleImages {
@@ -278,6 +280,34 @@ class InputHandler {
 
         case "f":
             view.window?.toggleFullScreen(nil)
+
+        case "h":
+            if renderer.scale > 1.0 {
+                renderer.panBy(dx: panStep, dy: 0)
+                view.needsDisplay = true
+            } else {
+                navigatePrevious(view: view)
+            }
+
+        case "l":
+            if renderer.scale > 1.0 {
+                renderer.panBy(dx: -panStep, dy: 0)
+                view.needsDisplay = true
+            } else {
+                navigateNext(view: view)
+            }
+
+        case "j":
+            if renderer.scale > 1.0 {
+                renderer.panBy(dx: 0, dy: panStep)
+                view.needsDisplay = true
+            }
+
+        case "k":
+            if renderer.scale > 1.0 {
+                renderer.panBy(dx: 0, dy: -panStep)
+                view.needsDisplay = true
+            }
 
         case "+", "=":
             renderer.zoomBy(factor: 1.25)

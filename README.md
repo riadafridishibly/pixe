@@ -118,7 +118,8 @@ pixe --no-cache ~/project      # Skip disk cache
 
 | Key | Action |
 |---|---|
-| `n` `Space` / `p` | Next / previous image |
+| `h` `l` / `n` `Space` / `p` | Next / previous image |
+| `h` `j` `k` `l` | Pan left / down / up / right (when zoomed) |
 | Arrow keys | Next / previous image |
 | `+` `-` `0` | Zoom in / out / fit |
 | Pinch / scroll | Zoom |
