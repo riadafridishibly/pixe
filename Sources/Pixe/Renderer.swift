@@ -530,15 +530,16 @@ class Renderer: NSObject, MTKViewDelegate {
             } else {
                 suffix = ""
             }
-            var text = "\(dir) \u{2014} \(imageList.count) images\(suffix)"
+            var text: String
             if let query = thumbnailSearchQuery {
-                text += query.isEmpty ? " \u{2014} /" : " \u{2014} /\(query)"
+                text = query.isEmpty ? "/" : "/\(query)"
+            } else {
+                text = "\(dir) \u{2014} \(imageList.count) images\(suffix)"
             }
             window?.updateInfo(text)
         case .image:
             guard let path = imageList.currentPath else { return }
-            let filename = (path as NSString).lastPathComponent
-            var text = filename
+            var text = path
             if let tex = currentTexture {
                 text += " \u{2014} \(tex.width) \u{00D7} \(tex.height)"
             }

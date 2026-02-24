@@ -50,7 +50,7 @@ class ImageWindow: NSWindow {
         infoLabel = NSTextField(labelWithString: "")
         infoLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
         infoLabel.textColor = NSColor(white: 0.8, alpha: 1.0)
-        infoLabel.frame = NSRect(x: 10, y: 2, width: 780, height: 20)
+        infoLabel.frame = NSRect(x: 10, y: 2, width: 780, height: 18)
         infoLabel.autoresizingMask = [.width]
 
         infoBar.addSubview(infoLabel)
