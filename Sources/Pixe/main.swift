@@ -18,12 +18,17 @@ if config.imageArguments.isEmpty {
 
 let imageList = ImageList(arguments: config.imageArguments, config: config)
 
-if imageList.isEmpty {
+if imageList.isEmpty && !imageList.hasDirectoryArguments {
     fputs("pixe: no images found\n", stderr)
     exit(1)
 }
 
-let initialMode: ViewMode = imageList.count > 1 ? .thumbnail : .image
+let initialMode: ViewMode
+if imageList.hasDirectoryArguments {
+    initialMode = .thumbnail
+} else {
+    initialMode = imageList.count > 1 ? .thumbnail : .image
+}
 
 let app = NSApplication.shared
 app.setActivationPolicy(.regular)

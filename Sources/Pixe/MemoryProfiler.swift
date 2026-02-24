@@ -167,6 +167,11 @@ enum MemoryProfiler {
         print("[mem] \(event) | RSS: \(rss) | Metal: \(metal)")
     }
 
+    static func logPerf(_ message: String) {
+        guard enabled else { return }
+        print("[perf] \(message)")
+    }
+
     static func logTextureCreated(_ label: String, texture: MTLTexture, device: MTLDevice) {
         guard enabled else { return }
         let texInfo = textureSummary(texture)

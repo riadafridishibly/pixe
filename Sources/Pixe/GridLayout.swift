@@ -2,7 +2,10 @@ import simd
 import Foundation
 
 class GridLayout {
-    let thumbnailSize: Float = 200.0
+    let defaultThumbnailSize: Float = 200.0
+    let minThumbnailSize: Float = 96.0
+    let maxThumbnailSize: Float = 420.0
+    var thumbnailSize: Float = 200.0
     let padding: Float = 10.0
 
     var viewportWidth: Float = 800.0
@@ -153,6 +156,19 @@ class GridLayout {
     }
 
     // MARK: - Navigation
+
+    func zoomBy(factor: Float) {
+        setThumbnailSize(thumbnailSize * factor)
+    }
+
+    func resetZoom() {
+        setThumbnailSize(defaultThumbnailSize)
+    }
+
+    private func setThumbnailSize(_ newSize: Float) {
+        thumbnailSize = max(minThumbnailSize, min(maxThumbnailSize, newSize))
+        scrollToSelection()
+    }
 
     func moveLeft() {
         let col = selectedIndex % columns

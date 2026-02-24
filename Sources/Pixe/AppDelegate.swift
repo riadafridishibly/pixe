@@ -45,10 +45,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(metalView)
         NSApp.activate(ignoringOtherApps: true)
+
+        imageList.startEnumerationIfNeeded()
+        imageList.startInitialSortIfNeeded()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        renderer.thumbnailCache?.flushManifest()
+        renderer?.thumbnailCache?.flushManifest()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

@@ -4,6 +4,9 @@ import MetalKit
 class InputHandler {
     weak var renderer: Renderer?
     private var magnificationAnchor: Float = 1.0
+    private var filenameSearchBuffer = ""
+    private var filenameSearchActive = false
+    private var filenameSearchStartIndex: Int?
 
     init(renderer: Renderer) {
         self.renderer = renderer
@@ -25,6 +28,16 @@ class InputHandler {
     private func handleThumbnailKeyDown(event: NSEvent, view: MTKView) {
         guard let renderer = renderer else { return }
         guard let chars = event.charactersIgnoringModifiers else { return }
+
+        if handleFilenameSearchControl(event: event, view: view) {
+            return
+        }
+        if handleFilenameSearchCharacter(event: event, view: view) {
+            return
+        }
+        if filenameSearchActive {
+            return
+        }
 
         switch chars {
         case "q":
@@ -75,6 +88,21 @@ class InputHandler {
         case "m":
             renderer.generateMemoryReport()
 
+        case "+", "=":
+            renderer.gridLayout.zoomBy(factor: 1.15)
+            renderer.updateInfoBar()
+            view.needsDisplay = true
+
+        case "-":
+            renderer.gridLayout.zoomBy(factor: 0.87)
+            renderer.updateInfoBar()
+            view.needsDisplay = true
+
+        case "0":
+            renderer.gridLayout.resetZoom()
+            renderer.updateInfoBar()
+            view.needsDisplay = true
+
         case "g":
             renderer.gridLayout.goToFirst()
             renderer.updateInfoBar()
@@ -89,6 +117,121 @@ class InputHandler {
                 handleThumbnailArrowKeys(keyCode: event.keyCode, view: view)
             }
         }
+    }
+
+    private func handleFilenameSearchControl(event: NSEvent, view: MTKView) -> Bool {
+        guard let renderer = renderer else { return false }
+
+        switch event.keyCode {
+        case 53:  // Escape
+            if filenameSearchActive {
+                cancelFilenameSearch(renderer: renderer, view: view)
+                return true
+            }
+            return false
+
+        case 51, 117:  // Backspace / Forward delete
+            guard filenameSearchActive else { return false }
+            guard !filenameSearchBuffer.isEmpty else { return true }
+            filenameSearchBuffer.removeLast()
+            if filenameSearchBuffer.isEmpty,
+               let start = filenameSearchStartIndex,
+               start < renderer.imageList.count {
+                renderer.gridLayout.selectedIndex = start
+                renderer.gridLayout.scrollToSelection()
+            } else {
+                jumpToFilenameMatch(prefix: filenameSearchBuffer, renderer: renderer, view: view)
+            }
+            renderer.setThumbnailSearchQuery(filenameSearchBuffer)
+            view.needsDisplay = true
+            return true
+
+        case 36, 76:  // Return / Enter
+            guard filenameSearchActive else { return false }
+            commitFilenameSearch(renderer: renderer, view: view)
+            return true
+
+        default:
+            break
+        }
+
+        if event.charactersIgnoringModifiers == "/" {
+            filenameSearchActive = true
+            filenameSearchBuffer = ""
+            filenameSearchStartIndex = renderer.gridLayout.selectedIndex
+            renderer.setThumbnailSearchQuery("")
+            view.needsDisplay = true
+            return true
+        }
+
+        return false
+    }
+
+    private func handleFilenameSearchCharacter(event: NSEvent, view: MTKView) -> Bool {
+        guard let renderer = renderer else { return false }
+        guard filenameSearchActive else { return false }
+        guard isSearchEvent(event) else { return false }
+        guard let chars = event.charactersIgnoringModifiers, chars.count == 1, let c = chars.first else {
+            return false
+        }
+        guard isSearchCharacter(c) else { return false }
+
+        let normalized = String(c).lowercased()
+        filenameSearchBuffer += normalized
+        jumpToFilenameMatch(prefix: filenameSearchBuffer, renderer: renderer, view: view)
+        renderer.setThumbnailSearchQuery(filenameSearchBuffer)
+        return true
+    }
+
+    private func jumpToFilenameMatch(prefix: String, renderer: Renderer, view: MTKView) {
+        guard !prefix.isEmpty else { return }
+        let paths = renderer.imageList.allPaths
+        guard !paths.isEmpty else { return }
+
+        let anchor = filenameSearchStartIndex ?? renderer.gridLayout.selectedIndex
+        let start = (anchor + 1) % paths.count
+        for offset in 0..<paths.count {
+            let idx = (start + offset) % paths.count
+            let name = (paths[idx] as NSString).lastPathComponent.lowercased()
+            if name.hasPrefix(prefix) {
+                renderer.gridLayout.selectedIndex = idx
+                renderer.gridLayout.scrollToSelection()
+                view.needsDisplay = true
+                return
+            }
+        }
+    }
+
+    private func isSearchEvent(_ event: NSEvent) -> Bool {
+        let blocked: NSEvent.ModifierFlags = [.command, .control, .option, .function]
+        return event.modifierFlags.intersection(blocked).isEmpty
+    }
+
+    private func isSearchCharacter(_ c: Character) -> Bool {
+        c.unicodeScalars.allSatisfy { scalar in
+            scalar.isASCII && scalar.value >= 32 && scalar.value <= 126
+        }
+    }
+
+    private func cancelFilenameSearch(renderer: Renderer, view: MTKView) {
+        if let index = filenameSearchStartIndex, index < renderer.imageList.count {
+            renderer.gridLayout.selectedIndex = index
+            renderer.gridLayout.scrollToSelection()
+        }
+        clearFilenameSearch(renderer: renderer)
+        view.needsDisplay = true
+    }
+
+    private func commitFilenameSearch(renderer: Renderer, view: MTKView) {
+        clearFilenameSearch(renderer: renderer)
+        view.needsDisplay = true
+    }
+
+    private func clearFilenameSearch(renderer: Renderer) {
+        filenameSearchBuffer = ""
+        filenameSearchActive = false
+        filenameSearchStartIndex = nil
+        renderer.setThumbnailSearchQuery(nil)
     }
 
     private func handleThumbnailArrowKeys(keyCode: UInt16, view: MTKView) {
@@ -247,17 +390,31 @@ class InputHandler {
     // MARK: - Trackpad Gestures
 
     func handleMagnification(gesture: NSMagnificationGestureRecognizer, view: MTKView) {
-        guard renderer?.mode == .image else { return }
+        guard let renderer = renderer else { return }
 
-        switch gesture.state {
-        case .began:
-            magnificationAnchor = renderer?.scale ?? 1.0
-        case .changed:
-            let newScale = magnificationAnchor * (1.0 + Float(gesture.magnification))
-            renderer?.setScale(newScale)
-            view.needsDisplay = true
-        default:
-            break
+        switch renderer.mode {
+        case .image:
+            switch gesture.state {
+            case .began:
+                magnificationAnchor = renderer.scale
+            case .changed:
+                let newScale = magnificationAnchor * (1.0 + Float(gesture.magnification))
+                renderer.setScale(newScale)
+                view.needsDisplay = true
+            default:
+                break
+            }
+
+        case .thumbnail:
+            switch gesture.state {
+            case .changed:
+                let factor = max(0.7, min(1.3, 1.0 + Float(gesture.magnification)))
+                renderer.gridLayout.zoomBy(factor: factor)
+                renderer.updateInfoBar()
+                view.needsDisplay = true
+            default:
+                break
+            }
         }
     }
 

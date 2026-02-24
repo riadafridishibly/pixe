@@ -10,11 +10,21 @@ enum ImageLoader {
     /// Load an image at display resolution. RAW files use embedded preview;
     /// non-RAW files use ImageIO downsampling to maxPixelSize.
     static func loadDisplayTexture(
-        from path: String, device: MTLDevice, commandQueue: MTLCommandQueue, maxPixelSize: Int = 4096
+        from path: String,
+        device: MTLDevice,
+        commandQueue: MTLCommandQueue,
+        maxPixelSize: Int = 4096,
+        minRawPreviewLongSide: Int? = nil
     ) -> MTLTexture? {
         if isRawFile(path) {
             // Use embedded JPEG preview — no CIImage/CIContext Metal leak
-            if let preview = loadPreviewTexture(from: path, device: device, commandQueue: commandQueue) {
+            let requiredPreviewLongSide = minRawPreviewLongSide ?? max(1536, Int(Double(maxPixelSize) * 0.9))
+            if let preview = loadPreviewTexture(
+                from: path,
+                device: device,
+                maxPixelSize: maxPixelSize,
+                minLongSide: requiredPreviewLongSide
+            ) {
                 return preview
             }
             // Fallback: decode RAW at reduced resolution via ImageIO
@@ -58,7 +68,7 @@ enum ImageLoader {
 
     struct ThumbnailResult {
         let texture: MTLTexture
-        let rawData: Data
+        let cacheData: Data
         let width: Int
         let height: Int
         let aspect: Float
@@ -146,6 +156,7 @@ enum ImageLoader {
             return nil
         }
 
+        context.setBlendMode(.copy)
         context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
 
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(
@@ -165,17 +176,56 @@ enum ImageLoader {
             bytesPerRow: bytesPerRow
         )
 
-        let rawData = Data(bytes: rawBuffer, count: dataSize)
+        guard let cacheData = compressCGImageToJPEG(cgImage, quality: 0.85) else { return nil }
 
-        return ThumbnailResult(texture: texture, rawData: rawData, width: width, height: height, aspect: aspect)
+        return ThumbnailResult(texture: texture, cacheData: cacheData, width: width, height: height, aspect: aspect)
     }
 
-    /// Create a texture from raw BGRA data loaded from disk cache
-    static func textureFromRawData(
-        _ data: Data, width: Int, height: Int, device: MTLDevice
-    ) -> MTLTexture? {
+    /// Compress a CGImage to JPEG data in memory for disk caching.
+    private static func compressCGImageToJPEG(_ image: CGImage, quality: CGFloat) -> Data? {
+        let data = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(data as CFMutableData, "public.jpeg" as CFString, 1, nil) else {
+            return nil
+        }
+        let options: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: quality]
+        CGImageDestinationAddImage(dest, image, options as CFDictionary)
+        guard CGImageDestinationFinalize(dest) else { return nil }
+        return data as Data
+    }
+
+    /// Create a texture from JPEG data loaded from disk cache.
+    static func textureFromJPEGData(
+        _ data: Data, device: MTLDevice
+    ) -> (texture: MTLTexture, width: Int, height: Int)? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+            return nil
+        }
+
+        let width = cgImage.width
+        let height = cgImage.height
         let bytesPerRow = width * 4
-        guard data.count == bytesPerRow * height else { return nil }
+        let dataSize = bytesPerRow * height
+
+        guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) else { return nil }
+
+        let rawBuffer = UnsafeMutableRawPointer.allocate(byteCount: dataSize, alignment: 16)
+        defer { rawBuffer.deallocate() }
+
+        guard let context = CGContext(
+            data: rawBuffer,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: bytesPerRow,
+            space: colorSpace,
+            bitmapInfo: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
+        ) else {
+            return nil
+        }
+
+        context.setBlendMode(.copy)
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
 
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: .bgra8Unorm,
@@ -187,15 +237,14 @@ enum ImageLoader {
         descriptor.storageMode = .shared
 
         guard let texture = device.makeTexture(descriptor: descriptor) else { return nil }
-        data.withUnsafeBytes { ptr in
-            texture.replace(
-                region: MTLRegion(origin: .init(), size: MTLSize(width: width, height: height, depth: 1)),
-                mipmapLevel: 0,
-                withBytes: ptr.baseAddress!,
-                bytesPerRow: bytesPerRow
-            )
-        }
-        return texture
+        texture.replace(
+            region: MTLRegion(origin: .init(), size: MTLSize(width: width, height: height, depth: 1)),
+            mipmapLevel: 0,
+            withBytes: rawBuffer,
+            bytesPerRow: bytesPerRow
+        )
+
+        return (texture: texture, width: width, height: height)
     }
 
     // MARK: - Shared Texture (no staging buffer)
@@ -229,6 +278,7 @@ enum ImageLoader {
             return nil
         }
 
+        context.setBlendMode(.copy)
         context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
 
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(
@@ -264,7 +314,7 @@ enum ImageLoader {
     }
 
     static func loadPreviewTexture(
-        from path: String, device: MTLDevice, commandQueue: MTLCommandQueue
+        from path: String, device: MTLDevice, maxPixelSize: Int, minLongSide: Int
     ) -> MTLTexture? {
         return autoreleasepool { () -> MTLTexture? in
             let url = URL(fileURLWithPath: path)
@@ -273,10 +323,15 @@ enum ImageLoader {
             // Extract embedded JPEG preview — do NOT set CreateThumbnailFromImageAlways
             // which would force a full RAW decode
             let options: [CFString: Any] = [
+                kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
                 kCGImageSourceCreateThumbnailWithTransform: true,
             ]
-            guard let preview = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary),
-                  preview.width >= 1024 || preview.height >= 1024 else {
+            guard let preview = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
+                return nil
+            }
+            let longSide = max(preview.width, preview.height)
+            guard longSide >= minLongSide else {
+                CGImageSourceRemoveCacheAtIndex(source, 0)
                 return nil
             }
             MemoryProfiler.logEvent("loadPreview: \(preview.width)×\(preview.height) from \((path as NSString).lastPathComponent)", device: device)

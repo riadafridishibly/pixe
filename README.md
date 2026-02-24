@@ -2,9 +2,8 @@
 
 ```
  ┌─┬─┬─┐
- │█│░│█│  P I X E
- │░│█│░│  GPU-accelerated image viewer for macOS
- │█│░│█│
+ │░│█│░│  P I X E
+ │█│░│█│  GPU-accelerated image viewer for macOS
  └─┴─┴─┘
 ```
 
@@ -70,6 +69,10 @@ pixe [options] <image|directory> ...
 | `--thumb-dir <path>` | Thumbnail cache directory (default: `~/.cache/pixe/thumbs`) |
 | `--thumb-size <int>` | Max thumbnail size in pixels (default: 256) |
 | `--no-cache` | Disable disk thumbnail cache |
+| `--walker <strategy>` | Traversal strategy: `auto`, `fd`, `readdir`, `foundation` |
+| `--sort <mode>` | Sort mode: `name`, `chrono`, `reverse-chrono` |
+| `--chrono` | Shortcut for `--sort chrono` |
+| `--reverse-chrono` | Shortcut for `--sort reverse-chrono` |
 | `--include <exts>` | Only show these extensions (e.g. `jpg,png`) |
 | `--exclude <exts>` | Hide these extensions (mutually exclusive with `--include`) |
 | `--clean-thumbs` | Delete thumbnail cache and exit |
@@ -86,6 +89,8 @@ pixe ~/Pictures/vacation       # Browse a directory
 pixe photo.jpg                 # View a single image
 pixe *.jpg                     # View matching files
 pixe --include=jpg,png ~/mixed # Only JPG and PNG
+pixe --chrono ~/Pictures       # Oldest to newest by EXIF capture date
+pixe --reverse-chrono ~/Pictures # Newest to oldest by EXIF capture date
 pixe --no-cache ~/project      # Skip disk cache
 ```
 
@@ -100,6 +105,8 @@ pixe --no-cache ~/project      # Skip disk cache
 | `g` / `G` | Jump to first / last |
 | `n` / `p` | Page down / up |
 | `Space` / Scroll | Page down / scroll |
+| `+` `-` `0` | Thumbnail zoom in / out / reset |
+| `/` then type | Search by filename prefix (`Enter` keep, `Esc` cancel/restore) |
 | `d` | Delete image (move to trash) |
 | `o` | Reveal in Finder |
 | `i` | Toggle image info |

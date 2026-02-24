@@ -65,20 +65,12 @@ private class LRUList {
     }
 }
 
-// MARK: - Disk manifest entry
-
-private struct ManifestEntry: Codable {
-    let width: Int
-    let height: Int
-    let aspect: Float
-    let mtime: Double  // source file modification time
-}
-
 // MARK: - ThumbnailCache
 
 class ThumbnailCache {
     let device: MTLDevice
-    let maxCached: Int = 300
+    let baseMaxCached: Int = 300
+    let hardMaxCached: Int = 1800
     let maxPixelSize: Int
 
     // In-memory texture cache
@@ -86,38 +78,37 @@ class ThumbnailCache {
     private(set) var aspects: [Int: Float] = [:]
     private var loading: Set<Int> = []
     private let lru = LRUList()
+    private var dynamicMaxCached: Int
+    private var pinnedVisibleRange: Range<Int> = 0..<0
 
     // Disk cache
     private let diskCacheEnabled: Bool
     private let thumbDir: String
-    private var manifest: [String: ManifestEntry] = [:]
-    private let manifestPath: String
-    private var manifestDirty = false
+    private let metadataStore: MetadataStore?
 
     // Concurrency
     private let loadQueue = DispatchQueue(label: "pixe.thumbnail", qos: .utility, attributes: .concurrent)
-    private let loadSemaphore = DispatchSemaphore(value: 4)
+    private let loadSemaphore = DispatchSemaphore(value: 8)
     private var currentGeneration: Int = 0
     private var currentPrefetchRange: Range<Int> = 0..<0
+    private var currentListVersion: Int = 0
     private let stateLock = NSLock()
 
-    // Manifest serialization
-    private let manifestQueue = DispatchQueue(label: "pixe.manifest", qos: .utility)
-    private var pendingManifestSave: DispatchWorkItem?
+    // Disk serialization
+    private let diskQueue = DispatchQueue(label: "pixe.disk-cache", qos: .utility)
 
     init(device: MTLDevice, config: Config) {
         self.device = device
         self.maxPixelSize = config.thumbSize
+        self.dynamicMaxCached = baseMaxCached
         self.diskCacheEnabled = config.diskCacheEnabled
         self.thumbDir = config.thumbDir
-        self.manifestPath = (config.thumbDir as NSString).appendingPathComponent("manifest.json")
+        self.metadataStore = config.diskCacheEnabled ? MetadataStore(directory: config.thumbDir) : nil
 
         if diskCacheEnabled {
             ensureDirectory(thumbDir)
-            loadManifest()
-            let manifestKeysSnapshot = Set(manifest.keys)
-            loadQueue.async { [weak self] in
-                self?.cleanOrphanedFiles(manifestKeys: manifestKeysSnapshot)
+            diskQueue.async { [weak self] in
+                self?.cleanOrphanedFiles()
             }
         }
     }
@@ -136,8 +127,10 @@ class ThumbnailCache {
         return aspects[index] ?? 1.0
     }
 
-    func ensureLoaded(indices: Range<Int>, paths: [String], completion: @escaping () -> Void) {
+    func ensureLoaded(indices: Range<Int>, pinnedIndices: Range<Int>, paths: [String], completion: @escaping () -> Void) {
         // Called from main thread only
+        updateDynamicBudget(prefetch: indices, pinned: pinnedIndices, totalPathCount: paths.count)
+
         var toLoad: [(Int, String)] = []
         for i in indices {
             guard i < paths.count else { continue }
@@ -146,77 +139,99 @@ class ThumbnailCache {
             toLoad.append((i, paths[i]))
         }
 
-        guard !toLoad.isEmpty else { return }
-
         stateLock.lock()
         currentGeneration += 1
         currentPrefetchRange = indices
         let generation = currentGeneration
+        let listVersion = currentListVersion
         stateLock.unlock()
+
+        guard !toLoad.isEmpty else {
+            evictIfNeeded()
+            return
+        }
+
         let device = self.device
         let maxPixelSize = self.maxPixelSize
         let diskEnabled = self.diskCacheEnabled
-        let manifestSnapshot = diskEnabled ? self.manifest : [:]
 
-        loadQueue.async { [weak self] in
-            for (index, path) in toLoad {
+        for (index, path) in toLoad {
+            loadQueue.async { [weak self] in
                 // Pre-semaphore stale check: skip if user scrolled past
                 if let self = self {
                     self.stateLock.lock()
-                    let isStale = self.currentGeneration != generation && !self.currentPrefetchRange.contains(index)
+                    let isStale =
+                        self.currentListVersion != listVersion ||
+                        (self.currentGeneration != generation && !self.currentPrefetchRange.contains(index))
                     self.stateLock.unlock()
                     if isStale {
                         DispatchQueue.main.async { self.loading.remove(index) }
-                        continue
+                        return
                     }
                 }
 
                 self?.loadSemaphore.wait()
+                let thumbStart = DispatchTime.now()
 
                 // Post-semaphore stale check: may have become stale while waiting
                 if let self = self {
                     self.stateLock.lock()
-                    let isStale = self.currentGeneration != generation && !self.currentPrefetchRange.contains(index)
+                    let isStale =
+                        self.currentListVersion != listVersion ||
+                        (self.currentGeneration != generation && !self.currentPrefetchRange.contains(index))
                     self.stateLock.unlock()
                     if isStale {
                         self.loadSemaphore.signal()
                         DispatchQueue.main.async { self.loading.remove(index) }
-                        continue
+                        return
                     }
                 }
 
                 let cacheKey = diskEnabled ? Self.cacheKey(for: path) : nil
                 var texture: MTLTexture?
                 var aspect: Float = 1.0
-                var rawData: Data?
-                var manifestEntry: ManifestEntry?
+                var cacheData: Data?
+                var sourceMtime: Double = 0
+                var perfDetail = ""
 
                 // Try disk cache first
                 if diskEnabled, let key = cacheKey {
-                    if let entry = manifestSnapshot[key] {
+                    if let entry = self?.metadataStore?.thumbnail(forKey: key) {
+                        let diskStart = DispatchTime.now()
                         if let diskPath = self?.diskPath(for: key),
                            let data = try? Data(contentsOf: URL(fileURLWithPath: diskPath)),
-                           let tex = ImageLoader.textureFromRawData(data, width: entry.width, height: entry.height, device: device) {
-                            texture = tex
+                           let result = ImageLoader.textureFromJPEGData(data, device: device),
+                           result.width == entry.width, result.height == entry.height {
+                            texture = result.texture
                             aspect = entry.aspect
+                            let diskMs = Double(DispatchTime.now().uptimeNanoseconds - diskStart.uptimeNanoseconds) / 1_000_000
+                            perfDetail = String(format: "disk+decode %.1fms", diskMs)
+                        } else {
+                            self?.metadataStore?.removeThumbnail(forKey: key)
                         }
                     }
                 }
 
                 // Generate fresh thumbnail if no cache hit
                 if texture == nil {
+                    let genStart = DispatchTime.now()
                     if let result = ImageLoader.generateThumbnail(
                         path: path, device: device, maxPixelSize: maxPixelSize
                     ) {
                         texture = result.texture
                         aspect = result.aspect
-                        rawData = result.rawData
-                        let mtime = Self.fileModTime(path)
-                        manifestEntry = ManifestEntry(width: result.width, height: result.height, aspect: result.aspect, mtime: mtime)
+                        cacheData = result.cacheData
+                        sourceMtime = Self.fileModTime(path)
+                        let genMs = Double(DispatchTime.now().uptimeNanoseconds - genStart.uptimeNanoseconds) / 1_000_000
+                        perfDetail = String(format: "generate %.1fms", genMs)
                     }
                 }
 
                 self?.loadSemaphore.signal()
+
+                let totalMs = Double(DispatchTime.now().uptimeNanoseconds - thumbStart.uptimeNanoseconds) / 1_000_000
+                let source = cacheData != nil ? "gen" : "hit"
+                MemoryProfiler.logPerf(String(format: "thumb %d %@ %.1fms (%@)", index, source, totalMs, perfDetail))
 
                 // Deliver this thumbnail immediately to main thread
                 if let texture = texture {
@@ -228,19 +243,27 @@ class ThumbnailCache {
                         self.lru.touch(index)
 
                         // Write to disk cache in background
-                        if diskEnabled, let rawData = rawData, let key = cacheKey, let entry = manifestEntry {
-                            self.manifest[key] = entry
-                            self.manifestDirty = true
+                        if diskEnabled, let cacheData = cacheData, let key = cacheKey {
                             let diskPath = self.diskPath(for: key)
-                            self.manifestQueue.async {
-                                self.writeDiskCache(data: rawData, to: diskPath)
+                            let width = texture.width
+                            let height = texture.height
+                            let aspect = aspect
+                            let sourcePath = path
+                            let sourceMtime = sourceMtime
+                            self.diskQueue.async {
+                                self.writeDiskCache(data: cacheData, to: diskPath)
+                                self.metadataStore?.upsertThumbnail(
+                                    key: key,
+                                    sourcePath: sourcePath,
+                                    sourceMtime: sourceMtime,
+                                    width: width,
+                                    height: height,
+                                    aspect: aspect
+                                )
                             }
                         }
 
                         self.evictIfNeeded()
-                        if self.manifestDirty {
-                            self.saveManifest()
-                        }
                         completion()
                     }
                 } else {
@@ -262,16 +285,49 @@ class ThumbnailCache {
         aspects.removeAll()
         lru.removeAll()
         loading.removeAll()
+        dynamicMaxCached = baseMaxCached
+        pinnedVisibleRange = 0..<0
+        stateLock.lock()
+        currentGeneration += 1
+        currentPrefetchRange = 0..<0
+        currentListVersion += 1
+        stateLock.unlock()
     }
 
     // MARK: - LRU Eviction
 
     private func evictIfNeeded() {
-        while cache.count > maxCached {
-            guard let oldest = lru.evictOldest() else { break }
-            cache.removeValue(forKey: oldest)
-            aspects.removeValue(forKey: oldest)
+        while cache.count > dynamicMaxCached {
+            let maxAttempts = lru.count
+            var attempts = 0
+            var evicted = false
+
+            while attempts < maxAttempts, let oldest = lru.evictOldest() {
+                attempts += 1
+                if pinnedVisibleRange.contains(oldest) {
+                    // Keep visible thumbnails resident to prevent flicker.
+                    lru.touch(oldest)
+                    continue
+                }
+                cache.removeValue(forKey: oldest)
+                aspects.removeValue(forKey: oldest)
+                evicted = true
+                break
+            }
+
+            // All remaining entries are pinned-visible; stop evicting.
+            if !evicted { break }
         }
+    }
+
+    private func updateDynamicBudget(prefetch: Range<Int>, pinned: Range<Int>, totalPathCount: Int) {
+        pinnedVisibleRange = pinned
+
+        let needed = max(prefetch.count, pinned.count)
+        let withSlack = needed + max(32, needed / 8)
+        let target = min(max(totalPathCount, baseMaxCached), hardMaxCached)
+        let newBudget = min(target, max(baseMaxCached, withSlack))
+        dynamicMaxCached = newBudget
     }
 
     // MARK: - Disk Cache
@@ -302,11 +358,7 @@ class ThumbnailCache {
     private func diskPath(for key: String) -> String {
         let subdir = (thumbDir as NSString).appendingPathComponent(String(key.prefix(2)))
         ensureDirectory(subdir)
-        return (subdir as NSString).appendingPathComponent(key + ".raw")
-    }
-
-    private func manifestEntry(for key: String) -> ManifestEntry? {
-        return manifest[key]
+        return (subdir as NSString).appendingPathComponent(key + ".jpg")
     }
 
     private func writeDiskCache(data: Data, to path: String) {
@@ -322,8 +374,13 @@ class ThumbnailCache {
 
     // MARK: - Orphan Cleanup
 
-    private func cleanOrphanedFiles(manifestKeys: Set<String>) {
+    private func cleanOrphanedFiles() {
         let fm = FileManager.default
+        let metadataKeys: Set<String> = metadataStore?.allThumbnailKeys() ?? []
+        let legacyManifestPath = (thumbDir as NSString).appendingPathComponent("manifest.json")
+        if fm.fileExists(atPath: legacyManifestPath) {
+            try? fm.removeItem(atPath: legacyManifestPath)
+        }
         guard let subdirs = try? fm.contentsOfDirectory(atPath: thumbDir) else { return }
         for subdir in subdirs {
             let subdirPath = (thumbDir as NSString).appendingPathComponent(subdir)
@@ -332,45 +389,22 @@ class ThumbnailCache {
                   subdir.count == 2 else { continue }
             guard let files = try? fm.contentsOfDirectory(atPath: subdirPath) else { continue }
             for file in files {
-                guard file.hasSuffix(".raw") else { continue }
-                let key = String(file.dropLast(4))  // remove ".raw"
-                if !manifestKeys.contains(key) {
-                    let filePath = (subdirPath as NSString).appendingPathComponent(file)
+                let filePath = (subdirPath as NSString).appendingPathComponent(file)
+                if file.hasSuffix(".raw") {
+                    // Legacy format — always remove
                     try? fm.removeItem(atPath: filePath)
+                } else if file.hasSuffix(".jpg") {
+                    let key = String(file.dropLast(4))  // remove ".jpg"
+                    if !metadataKeys.contains(key) {
+                        try? fm.removeItem(atPath: filePath)
+                    }
                 }
             }
         }
     }
 
-    // MARK: - Manifest I/O
-
-    private func loadManifest() {
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: manifestPath)),
-              let decoded = try? JSONDecoder().decode([String: ManifestEntry].self, from: data) else {
-            return
-        }
-        manifest = decoded
-    }
-
     func flushManifest() {
-        guard let work = pendingManifestSave, !work.isCancelled else { return }
-        work.cancel()
-        pendingManifestSave = nil
-        manifestQueue.sync {
-            work.perform()
-        }
-    }
-
-    private func saveManifest() {
-        manifestDirty = false
-        // Snapshot manifest (value-type copy) on main thread
-        let snapshot = manifest
-        guard let data = try? JSONEncoder().encode(snapshot) else { return }
-        pendingManifestSave?.cancel()
-        let work = DispatchWorkItem { [manifestPath] in
-            try? data.write(to: URL(fileURLWithPath: manifestPath), options: .atomic)
-        }
-        pendingManifestSave = work
-        manifestQueue.asyncAfter(deadline: .now() + 1.0, execute: work)
+        diskQueue.sync { }
+        metadataStore?.flush()
     }
 }
