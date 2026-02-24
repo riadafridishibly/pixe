@@ -99,6 +99,11 @@ class ThumbnailCache {
     private let loadSemaphore = DispatchSemaphore(value: 4)
     private var currentGeneration: Int = 0
     private var currentPrefetchRange: Range<Int> = 0..<0
+    private let stateLock = NSLock()
+
+    // Manifest serialization
+    private let manifestQueue = DispatchQueue(label: "pixe.manifest", qos: .utility)
+    private var pendingManifestSave: DispatchWorkItem?
 
     init(device: MTLDevice, config: Config) {
         self.device = device
@@ -110,6 +115,10 @@ class ThumbnailCache {
         if diskCacheEnabled {
             ensureDirectory(thumbDir)
             loadManifest()
+            let manifestKeysSnapshot = Set(manifest.keys)
+            loadQueue.async { [weak self] in
+                self?.cleanOrphanedFiles(manifestKeys: manifestKeysSnapshot)
+            }
         }
     }
 
@@ -139,9 +148,11 @@ class ThumbnailCache {
 
         guard !toLoad.isEmpty else { return }
 
+        stateLock.lock()
         currentGeneration += 1
         currentPrefetchRange = indices
         let generation = currentGeneration
+        stateLock.unlock()
         let device = self.device
         let maxPixelSize = self.maxPixelSize
         let diskEnabled = self.diskCacheEnabled
@@ -150,20 +161,28 @@ class ThumbnailCache {
         loadQueue.async { [weak self] in
             for (index, path) in toLoad {
                 // Pre-semaphore stale check: skip if user scrolled past
-                if let self = self, self.currentGeneration != generation,
-                   !self.currentPrefetchRange.contains(index) {
-                    DispatchQueue.main.async { self.loading.remove(index) }
-                    continue
+                if let self = self {
+                    self.stateLock.lock()
+                    let isStale = self.currentGeneration != generation && !self.currentPrefetchRange.contains(index)
+                    self.stateLock.unlock()
+                    if isStale {
+                        DispatchQueue.main.async { self.loading.remove(index) }
+                        continue
+                    }
                 }
 
                 self?.loadSemaphore.wait()
 
                 // Post-semaphore stale check: may have become stale while waiting
-                if let self = self, self.currentGeneration != generation,
-                   !self.currentPrefetchRange.contains(index) {
-                    self.loadSemaphore.signal()
-                    DispatchQueue.main.async { self.loading.remove(index) }
-                    continue
+                if let self = self {
+                    self.stateLock.lock()
+                    let isStale = self.currentGeneration != generation && !self.currentPrefetchRange.contains(index)
+                    self.stateLock.unlock()
+                    if isStale {
+                        self.loadSemaphore.signal()
+                        DispatchQueue.main.async { self.loading.remove(index) }
+                        continue
+                    }
                 }
 
                 let cacheKey = diskEnabled ? Self.cacheKey(for: path) : nil
@@ -213,7 +232,7 @@ class ThumbnailCache {
                             self.manifest[key] = entry
                             self.manifestDirty = true
                             let diskPath = self.diskPath(for: key)
-                            self.loadQueue.async {
+                            self.manifestQueue.async {
                                 self.writeDiskCache(data: rawData, to: diskPath)
                             }
                         }
@@ -291,13 +310,35 @@ class ThumbnailCache {
     }
 
     private func writeDiskCache(data: Data, to path: String) {
-        try? data.write(to: URL(fileURLWithPath: path))
+        try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
     }
 
     private func ensureDirectory(_ path: String) {
         let fm = FileManager.default
         if !fm.fileExists(atPath: path) {
             try? fm.createDirectory(atPath: path, withIntermediateDirectories: true)
+        }
+    }
+
+    // MARK: - Orphan Cleanup
+
+    private func cleanOrphanedFiles(manifestKeys: Set<String>) {
+        let fm = FileManager.default
+        guard let subdirs = try? fm.contentsOfDirectory(atPath: thumbDir) else { return }
+        for subdir in subdirs {
+            let subdirPath = (thumbDir as NSString).appendingPathComponent(subdir)
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: subdirPath, isDirectory: &isDir), isDir.boolValue,
+                  subdir.count == 2 else { continue }
+            guard let files = try? fm.contentsOfDirectory(atPath: subdirPath) else { continue }
+            for file in files {
+                guard file.hasSuffix(".raw") else { continue }
+                let key = String(file.dropLast(4))  // remove ".raw"
+                if !manifestKeys.contains(key) {
+                    let filePath = (subdirPath as NSString).appendingPathComponent(file)
+                    try? fm.removeItem(atPath: filePath)
+                }
+            }
         }
     }
 
@@ -311,11 +352,25 @@ class ThumbnailCache {
         manifest = decoded
     }
 
+    func flushManifest() {
+        guard let work = pendingManifestSave, !work.isCancelled else { return }
+        work.cancel()
+        pendingManifestSave = nil
+        manifestQueue.sync {
+            work.perform()
+        }
+    }
+
     private func saveManifest() {
         manifestDirty = false
-        guard let data = try? JSONEncoder().encode(manifest) else { return }
-        loadQueue.async { [manifestPath] in
-            try? data.write(to: URL(fileURLWithPath: manifestPath))
+        // Snapshot manifest (value-type copy) on main thread
+        let snapshot = manifest
+        guard let data = try? JSONEncoder().encode(snapshot) else { return }
+        pendingManifestSave?.cancel()
+        let work = DispatchWorkItem { [manifestPath] in
+            try? data.write(to: URL(fileURLWithPath: manifestPath), options: .atomic)
         }
+        pendingManifestSave = work
+        manifestQueue.asyncAfter(deadline: .now() + 1.0, execute: work)
     }
 }

@@ -5,6 +5,8 @@ import Metal
 /// Also logs automatically on key events (image load, prefetch, thumbnail batch).
 enum MemoryProfiler {
 
+    static var enabled = false
+
     // MARK: - Process Memory
 
     /// Resident memory (RSS) in bytes — what Activity Monitor shows
@@ -159,12 +161,14 @@ enum MemoryProfiler {
     // MARK: - Event Logging
 
     static func logEvent(_ event: String, device: MTLDevice) {
+        guard enabled else { return }
         let rss = formatBytes(residentMemoryBytes())
         let metal = formatBytes(metalAllocatedSize(device))
         print("[mem] \(event) | RSS: \(rss) | Metal: \(metal)")
     }
 
     static func logTextureCreated(_ label: String, texture: MTLTexture, device: MTLDevice) {
+        guard enabled else { return }
         let texInfo = textureSummary(texture)
         logEvent("\(label): \(texInfo)", device: device)
     }

@@ -41,6 +41,10 @@ class Renderer: NSObject, MTKViewDelegate {
     var thumbnailCache: ThumbnailCache?
     var backingScaleFactor: CGFloat = 2.0
 
+    // Thumbnail uniform buffer
+    private var thumbnailUniformBuffer: MTLBuffer?
+    private var thumbnailUniformCapacity: Int = 0
+
     // Zoom/pan state
     var scale: Float = 1.0
     var translation: SIMD2<Float> = .zero
@@ -66,11 +70,9 @@ class Renderer: NSObject, MTKViewDelegate {
         self.commandQueue = device.makeCommandQueue()!
         self.imageList = imageList
         self.mode = initialMode
-        if let screen = NSScreen.main {
-            let px = screen.frame.size.width * screen.backingScaleFactor
-            let py = screen.frame.size.height * screen.backingScaleFactor
-            self.viewportSize = SIMD2(Float(px), Float(py))
-        }
+        // Conservative default matching 800×600 window at 2× scale.
+        // The real drawable size arrives via mtkView(_:drawableSizeWillChange:).
+        self.viewportSize = SIMD2(1600, 1200)
         super.init()
         setupPipeline()
         setupVertexBuffer()
@@ -200,7 +202,14 @@ class Renderer: NSObject, MTKViewDelegate {
             if let view = window?.contentView as? MTKView { view.needsDisplay = true }
         }
 
-        // 3. Background decode at display resolution
+        // 3. If a decode is already in flight for this path, wait for it to complete.
+        // Prefetch completion now promotes it to currentTexture when this path is selected.
+        if prefetchLoading.contains(path) {
+            updateWindowTitle()
+            return
+        }
+
+        // 4. Background decode at display resolution
         // Mark path as loading so prefetchAdjacentImages won't duplicate this decode
         prefetchLoading.insert(path)
 
@@ -210,13 +219,16 @@ class Renderer: NSObject, MTKViewDelegate {
 
         let task = DispatchWorkItem { [weak self] in
             // Check generation: if user navigated away, this decode is stale
-            guard let self = self, self.loadGeneration == generation else { return }
+            guard let self = self, self.loadGeneration == generation else {
+                DispatchQueue.main.async { [weak self] in self?.prefetchLoading.remove(path) }
+                return
+            }
             MemoryProfiler.logEvent("display decode starting: \((path as NSString).lastPathComponent)", device: device)
             let texture = ImageLoader.loadDisplayTexture(from: path, device: device, commandQueue: commandQueue, maxPixelSize: maxPixelSize)
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
                 self.prefetchLoading.remove(path)
-                guard self.imageList.currentPath == path else { return }
+                guard self.mode == .image, self.imageList.currentPath == path else { return }
                 if let texture = texture {
                     self.currentTexture = texture
                     self.imageAspect = Float(texture.width) / Float(texture.height)
@@ -272,8 +284,22 @@ class Renderer: NSObject, MTKViewDelegate {
                 }
                 let aspect = Float(tex.width) / Float(tex.height)
                 DispatchQueue.main.async {
-                    self?.prefetchLoading.remove(path)
-                    self?.prefetchCache[path] = PrefetchEntry(texture: tex, aspect: aspect)
+                    guard let self = self else { return }
+                    self.prefetchLoading.remove(path)
+                    guard self.mode == .image else { return }
+                    self.prefetchCache[path] = PrefetchEntry(texture: tex, aspect: aspect)
+
+                    // If user navigated to this image while prefetch was in-flight,
+                    // promote the prefetched texture immediately.
+                    guard self.imageList.currentPath == path else { return }
+                    self.currentTexture = tex
+                    self.imageAspect = aspect
+                    self.resetView()
+                    self.updateWindowTitle()
+                    self.prefetchAdjacentImages()
+                    if let view = self.window?.contentView as? MTKView {
+                        view.needsDisplay = true
+                    }
                 }
             }
         }
@@ -482,6 +508,7 @@ class Renderer: NSObject, MTKViewDelegate {
         gridLayout.selectedIndex = imageList.currentIndex
         currentTexture = nil
         currentLoadTask?.cancel()
+        loadGeneration += 1
         let evictedCount = prefetchCache.count
         prefetchCache.removeAll()
         prefetchLoading.removeAll()
@@ -607,17 +634,42 @@ class Renderer: NSObject, MTKViewDelegate {
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
         }
 
-        // Draw visible thumbnails — set shared state once
+        // Draw visible thumbnails — collect uniforms into a shared buffer
         encoder.setRenderPipelineState(pipelineState)
         encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
         encoder.setFragmentSamplerState(samplerState, index: 0)
+
+        // Gather visible items that have textures
+        var visibleItems: [(index: Int, texture: MTLTexture)] = []
         for i in visible {
             guard let texture = cache.texture(at: i) else { continue }
-            let aspect = cache.aspect(at: i)
-            var uniforms = Uniforms(transform: gridLayout.transformForIndex(i, imageAspect: aspect))
-            encoder.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
-            encoder.setFragmentTexture(texture, index: 0)
-            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
+            visibleItems.append((i, texture))
+        }
+
+        if !visibleItems.isEmpty {
+            let uniformStride = MemoryLayout<Uniforms>.stride
+            let needed = visibleItems.count
+
+            // Grow uniform buffer if needed
+            if needed > thumbnailUniformCapacity {
+                let newCapacity = max(needed, thumbnailUniformCapacity * 2, 64)
+                thumbnailUniformBuffer = device.makeBuffer(length: uniformStride * newCapacity, options: .storageModeShared)
+                thumbnailUniformCapacity = newCapacity
+            }
+
+            if let buffer = thumbnailUniformBuffer {
+                let ptr = buffer.contents().bindMemory(to: Uniforms.self, capacity: needed)
+                for (slot, item) in visibleItems.enumerated() {
+                    let aspect = cache.aspect(at: item.index)
+                    ptr[slot] = Uniforms(transform: gridLayout.transformForIndex(item.index, imageAspect: aspect))
+                }
+
+                for (slot, item) in visibleItems.enumerated() {
+                    encoder.setVertexBuffer(buffer, offset: uniformStride * slot, index: 1)
+                    encoder.setFragmentTexture(item.texture, index: 0)
+                    encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
+                }
+            }
         }
 
         encoder.endEncoding()
