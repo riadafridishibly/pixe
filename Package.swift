@@ -14,6 +14,9 @@ let package = Package(
             name: "Pixe",
             swiftSettings: [
                 .swiftLanguageMode(.v5)
+            ],
+            linkerSettings: [
+                .linkedLibrary("sqlite3")
             ]
         )
     ]

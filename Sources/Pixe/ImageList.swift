@@ -2,6 +2,11 @@ import Foundation
 import ImageIO
 
 class ImageList {
+    private struct FileSignature {
+        let mtime: Double
+        let fileSize: Int64
+    }
+
     private var paths: [String] = []
     private(set) var currentIndex: Int = 0
     private let sortMode: SortMode
@@ -14,7 +19,8 @@ class ImageList {
     private(set) var hasDirectoryArguments: Bool = false
     private var deletedPaths: Set<String> = []
     private var directoryArgs: [(path: String, config: Config)] = []
-    private var exifDateCache: [String: Date?] = [:]
+    private var exifDateCache: [String: ExifMetadataValue] = [:]
+    private let metadataStore: MetadataStore?
 
     // Callbacks for incremental updates
     var onBatchAdded: ((Int) -> Void)?
@@ -31,6 +37,7 @@ class ImageList {
 
     init(arguments: [String], config: Config) {
         sortMode = config.sortMode
+        metadataStore = config.diskCacheEnabled ? MetadataStore(directory: config.thumbDir) : nil
         let fileManager = FileManager.default
 
         for arg in arguments {
@@ -226,9 +233,15 @@ class ImageList {
     }
 
     private func sortByExifDate(paths: inout [String], reverse: Bool) {
+        var exifValuesByPath: [String: ExifMetadataValue] = [:]
+        exifValuesByPath.reserveCapacity(paths.count)
+        for path in paths where exifValuesByPath[path] == nil {
+            exifValuesByPath[path] = exifCaptureMetadata(for: path)
+        }
+
         paths.sort { lhs, rhs in
-            let lhsDate = exifCaptureDate(for: lhs)
-            let rhsDate = exifCaptureDate(for: rhs)
+            let lhsDate = exifDate(from: exifValuesByPath[lhs] ?? .missing)
+            let rhsDate = exifDate(from: exifValuesByPath[rhs] ?? .missing)
 
             switch (lhsDate, rhsDate) {
             case let (lhs?, rhs?):
@@ -247,13 +260,55 @@ class ImageList {
         }
     }
 
-    private func exifCaptureDate(for path: String) -> Date? {
+    private func exifDate(from value: ExifMetadataValue) -> Date? {
+        switch value {
+        case .missing:
+            return nil
+        case .date(let date):
+            return date
+        }
+    }
+
+    private func exifCaptureMetadata(for path: String) -> ExifMetadataValue {
         if let cached = exifDateCache[path] {
             return cached
         }
-        let parsed = Self.readExifCaptureDate(for: path)
-        exifDateCache[path] = parsed
-        return parsed
+
+        let signature = fileSignature(for: path)
+        if let signature,
+           let persisted = metadataStore?.cachedExif(
+               path: path,
+               mtime: signature.mtime,
+               fileSize: signature.fileSize
+           ) {
+            exifDateCache[path] = persisted
+            return persisted
+        }
+
+        let parsedDate = Self.readExifCaptureDate(for: path)
+        let parsedMetadata: ExifMetadataValue = parsedDate.map { .date($0) } ?? .missing
+        exifDateCache[path] = parsedMetadata
+        if let signature {
+            metadataStore?.upsertExif(
+                path: path,
+                mtime: signature.mtime,
+                fileSize: signature.fileSize,
+                captureDate: parsedDate
+            )
+        }
+        return parsedMetadata
+    }
+
+    private func fileSignature(for path: String) -> FileSignature? {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
+              let modDate = attrs[.modificationDate] as? Date,
+              let rawSize = attrs[.size] as? NSNumber else {
+            return nil
+        }
+        return FileSignature(
+            mtime: modDate.timeIntervalSince1970,
+            fileSize: rawSize.int64Value
+        )
     }
 
     private static func readExifCaptureDate(for path: String) -> Date? {
@@ -344,6 +399,7 @@ class ImageList {
         guard index >= 0 && index < paths.count else { return nil }
         let removed = paths.remove(at: index)
         deletedPaths.insert(removed)
+        exifDateCache.removeValue(forKey: removed)
         if paths.isEmpty {
             currentIndex = 0
         } else if index < currentIndex {

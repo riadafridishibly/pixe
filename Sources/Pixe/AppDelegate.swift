@@ -51,7 +51,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        renderer.thumbnailCache?.flushManifest()
+        renderer?.thumbnailCache?.flushManifest()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
