@@ -47,6 +47,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
 
         imageList.startEnumerationIfNeeded()
+        imageList.startInitialSortIfNeeded()
     }
 
     func applicationWillTerminate(_ notification: Notification) {

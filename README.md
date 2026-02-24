@@ -71,6 +71,9 @@ pixe [options] <image|directory> ...
 | `--thumb-size <int>` | Max thumbnail size in pixels (default: 256) |
 | `--no-cache` | Disable disk thumbnail cache |
 | `--walker <strategy>` | Traversal strategy: `auto`, `fd`, `readdir`, `foundation` |
+| `--sort <mode>` | Sort mode: `name`, `chrono`, `reverse-chrono` |
+| `--chrono` | Shortcut for `--sort chrono` |
+| `--reverse-chrono` | Shortcut for `--sort reverse-chrono` |
 | `--include <exts>` | Only show these extensions (e.g. `jpg,png`) |
 | `--exclude <exts>` | Hide these extensions (mutually exclusive with `--include`) |
 | `--clean-thumbs` | Delete thumbnail cache and exit |
@@ -87,6 +90,8 @@ pixe ~/Pictures/vacation       # Browse a directory
 pixe photo.jpg                 # View a single image
 pixe *.jpg                     # View matching files
 pixe --include=jpg,png ~/mixed # Only JPG and PNG
+pixe --chrono ~/Pictures       # Oldest to newest by EXIF capture date
+pixe --reverse-chrono ~/Pictures # Newest to oldest by EXIF capture date
 pixe --no-cache ~/project      # Skip disk cache
 ```
 

@@ -102,6 +102,7 @@ class ThumbnailCache {
     private let loadSemaphore = DispatchSemaphore(value: 8)
     private var currentGeneration: Int = 0
     private var currentPrefetchRange: Range<Int> = 0..<0
+    private var currentListVersion: Int = 0
     private let stateLock = NSLock()
 
     // Manifest serialization
@@ -156,6 +157,7 @@ class ThumbnailCache {
         currentGeneration += 1
         currentPrefetchRange = indices
         let generation = currentGeneration
+        let listVersion = currentListVersion
         stateLock.unlock()
 
         guard !toLoad.isEmpty else {
@@ -173,7 +175,9 @@ class ThumbnailCache {
                 // Pre-semaphore stale check: skip if user scrolled past
                 if let self = self {
                     self.stateLock.lock()
-                    let isStale = self.currentGeneration != generation && !self.currentPrefetchRange.contains(index)
+                    let isStale =
+                        self.currentListVersion != listVersion ||
+                        (self.currentGeneration != generation && !self.currentPrefetchRange.contains(index))
                     self.stateLock.unlock()
                     if isStale {
                         DispatchQueue.main.async { self.loading.remove(index) }
@@ -187,7 +191,9 @@ class ThumbnailCache {
                 // Post-semaphore stale check: may have become stale while waiting
                 if let self = self {
                     self.stateLock.lock()
-                    let isStale = self.currentGeneration != generation && !self.currentPrefetchRange.contains(index)
+                    let isStale =
+                        self.currentListVersion != listVersion ||
+                        (self.currentGeneration != generation && !self.currentPrefetchRange.contains(index))
                     self.stateLock.unlock()
                     if isStale {
                         self.loadSemaphore.signal()
@@ -287,6 +293,11 @@ class ThumbnailCache {
         loading.removeAll()
         dynamicMaxCached = baseMaxCached
         pinnedVisibleRange = 0..<0
+        stateLock.lock()
+        currentGeneration += 1
+        currentPrefetchRange = 0..<0
+        currentListVersion += 1
+        stateLock.unlock()
     }
 
     // MARK: - LRU Eviction

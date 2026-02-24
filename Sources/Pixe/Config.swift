@@ -23,6 +23,16 @@ enum DirectoryWalkStrategy: String {
     case foundation
 }
 
+enum SortMode: String {
+    case name
+    case chrono
+    case reverseChrono = "reverse-chrono"
+
+    var requiresExplicitSort: Bool {
+        self != .name
+    }
+}
+
 struct Config {
     let thumbDir: String
     let thumbSize: Int
@@ -30,6 +40,7 @@ struct Config {
     let cleanThumbs: Bool
     let debugMemory: Bool
     let walkStrategy: DirectoryWalkStrategy
+    let sortMode: SortMode
     let extensionFilter: ExtensionFilter
     let imageArguments: [String]
 
@@ -47,6 +58,7 @@ struct Config {
         var cleanThumbs = false
         var debugMemory = false
         var walkStrategy: DirectoryWalkStrategy = .auto
+        var sortMode: SortMode = .name
         var imageArguments: [String] = []
         var includeExts: Set<String>? = nil
         var excludeExts: Set<String>? = nil
@@ -96,6 +108,29 @@ struct Config {
                     exit(1)
                 }
                 walkStrategy = parsed
+            case let a where a.hasPrefix("--sort="):
+                let value = String(a.dropFirst("--sort=".count)).lowercased()
+                guard let parsed = SortMode(rawValue: value) else {
+                    fputs("pixe: invalid --sort value '\(value)' (expected: name|chrono|reverse-chrono)\n", stderr)
+                    exit(1)
+                }
+                sortMode = parsed
+            case "--sort":
+                i += 1
+                guard i < args.count else {
+                    fputs("pixe: --sort requires a value (name|chrono|reverse-chrono)\n", stderr)
+                    exit(1)
+                }
+                let value = args[i].lowercased()
+                guard let parsed = SortMode(rawValue: value) else {
+                    fputs("pixe: invalid --sort value '\(value)' (expected: name|chrono|reverse-chrono)\n", stderr)
+                    exit(1)
+                }
+                sortMode = parsed
+            case "--chrono":
+                sortMode = .chrono
+            case "--reverse-chrono":
+                sortMode = .reverseChrono
             case let a where a.hasPrefix("--include="):
                 includeExts = parseExtensions(String(a.dropFirst("--include=".count)))
             case "--include":
@@ -134,6 +169,7 @@ struct Config {
             cleanThumbs: cleanThumbs,
             debugMemory: debugMemory,
             walkStrategy: walkStrategy,
+            sortMode: sortMode,
             extensionFilter: extensionFilter,
             imageArguments: imageArguments
         )
@@ -175,6 +211,9 @@ struct Config {
           --thumb-size <int>   Max thumbnail pixel size (default: 256)
           --no-cache           Disable disk thumbnail cache
           --walker <strategy>  Traversal strategy: auto|fd|readdir|foundation (default: auto)
+          --sort <mode>        Sort mode: name|chrono|reverse-chrono (default: name)
+          --chrono             Shortcut for --sort chrono
+          --reverse-chrono     Shortcut for --sort reverse-chrono
           --include <exts>     Only show these extensions (e.g. --include=.jpg,.png)
           --exclude <exts>     Hide these extensions (e.g. --exclude=.svg,.pdf)
           --clean-thumbs       Delete thumbnail cache and exit

@@ -35,7 +35,7 @@ class Renderer: NSObject, MTKViewDelegate {
 
     // View mode
     var mode: ViewMode
-    var hasMultipleImages: Bool { imageList.count > 1 || imageList.isEnumerating || imageList.hasDirectoryArguments }
+    var hasMultipleImages: Bool { imageList.count > 1 || imageList.isEnumerating || imageList.isSorting || imageList.hasDirectoryArguments }
 
     // Grid
     let gridLayout = GridLayout()
@@ -350,15 +350,18 @@ class Renderer: NSObject, MTKViewDelegate {
     }
 
     func updateWindowTitle() {
-        let scanning = imageList.isEnumerating
+        let isScanning = imageList.isEnumerating
+        let isSorting = imageList.isSorting
         switch mode {
         case .image:
             guard let path = imageList.currentPath else { return }
             let filename = (path as NSString).lastPathComponent
             window?.updateTitle(filename: filename, index: imageList.currentIndex, total: imageList.count)
         case .thumbnail:
-            if scanning {
+            if isScanning {
                 window?.title = "pixe [\(imageList.count) images] scanning..."
+            } else if isSorting {
+                window?.title = "pixe [\(imageList.count) images] sorting..."
             } else {
                 window?.title = "pixe [\(imageList.count) images]"
             }
@@ -405,19 +408,29 @@ class Renderer: NSObject, MTKViewDelegate {
 
     func updateInfoBar() {
         hideImageInfo()
-        let scanning = imageList.isEnumerating
+        let isScanning = imageList.isEnumerating
+        let isSorting = imageList.isSorting
         switch mode {
         case .thumbnail:
             if imageList.allPaths.isEmpty {
-                if scanning {
+                if isScanning {
                     window?.updateInfo("scanning...")
+                } else if isSorting {
+                    window?.updateInfo("sorting...")
                 }
                 return
             }
             let index = gridLayout.selectedIndex
             let path = imageList.allPaths[min(index, imageList.allPaths.count - 1)]
             let dir = shortenPath((path as NSString).deletingLastPathComponent)
-            let suffix = scanning ? " scanning..." : ""
+            let suffix: String
+            if isScanning {
+                suffix = " scanning..."
+            } else if isSorting {
+                suffix = " sorting..."
+            } else {
+                suffix = ""
+            }
             var text = "\(dir) \u{2014} \(imageList.count) images\(suffix)"
             if let query = thumbnailSearchQuery {
                 text += query.isEmpty ? " \u{2014} /" : " \u{2014} /\(query)"

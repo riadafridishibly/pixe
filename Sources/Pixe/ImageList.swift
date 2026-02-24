@@ -1,14 +1,20 @@
 import Foundation
+import ImageIO
 
 class ImageList {
     private var paths: [String] = []
     private(set) var currentIndex: Int = 0
+    private let sortMode: SortMode
+    private let sortQueue = DispatchQueue(label: "pixe.sort", qos: .userInitiated)
+    private var sortGeneration: Int = 0
 
     // Async enumeration state
     private(set) var isEnumerating: Bool = false
+    private(set) var isSorting: Bool = false
     private(set) var hasDirectoryArguments: Bool = false
     private var deletedPaths: Set<String> = []
     private var directoryArgs: [(path: String, config: Config)] = []
+    private var exifDateCache: [String: Date?] = [:]
 
     // Callbacks for incremental updates
     var onBatchAdded: ((Int) -> Void)?
@@ -24,6 +30,7 @@ class ImageList {
     }
 
     init(arguments: [String], config: Config) {
+        sortMode = config.sortMode
         let fileManager = FileManager.default
 
         for arg in arguments {
@@ -63,7 +70,8 @@ class ImageList {
 
             if self.configuredWalkStrategyIsUnavailable(dirs.first?.config.walkStrategy) {
                 DispatchQueue.main.async { [weak self] in
-                    self?.sortAndReindex()
+                    self?.isEnumerating = false
+                    self?.finalizeList(shouldSort: self?.sortMode.requiresExplicitSort ?? false)
                 }
                 return
             }
@@ -82,6 +90,7 @@ class ImageList {
                 .map { "\($0.key):\($0.value)" }
                 .joined(separator: ",")
             let usedOnlyFD = perStrategyDirCount.count == 1 && perStrategyDirCount["fd"] == dirs.count
+            let shouldSort = self.sortMode.requiresExplicitSort || !usedOnlyFD
             MemoryProfiler.logPerf(
                 String(
                     format: "traverse total %.1fms dirs=%d files=%d strategies=[%@] finalSort=%@",
@@ -89,14 +98,20 @@ class ImageList {
                     dirs.count,
                     totalFound,
                     strategySummary,
-                    usedOnlyFD ? "skip" : "sort"
+                    shouldSort ? self.sortMode.rawValue : "skip"
                 )
             )
 
             DispatchQueue.main.async { [weak self] in
-                self?.sortAndReindex(shouldSort: !usedOnlyFD)
+                self?.isEnumerating = false
+                self?.finalizeList(shouldSort: shouldSort)
             }
         }
+    }
+
+    func startInitialSortIfNeeded() {
+        guard !hasDirectoryArguments, sortMode.requiresExplicitSort, paths.count > 1 else { return }
+        finalizeList(shouldSort: true)
     }
 
     private func configuredWalkStrategyIsUnavailable(_ strategy: DirectoryWalkStrategy?) -> Bool {
@@ -148,24 +163,153 @@ class ImageList {
         onBatchAdded?(paths.count)
     }
 
-    private func sortAndReindex(shouldSort: Bool = true) {
-        if shouldSort {
-            let currentPathBeforeSort = currentPath
-            paths.sort()
-            if let savedPath = currentPathBeforeSort,
-               let newIndex = paths.firstIndex(of: savedPath) {
-                currentIndex = newIndex
-            } else if !paths.isEmpty {
-                currentIndex = 0
+    private func finalizeList(shouldSort: Bool) {
+        guard shouldSort else {
+            sortGeneration += 1
+            isSorting = false
+            clampCurrentIndex()
+            onEnumerationComplete?(paths.count)
+            return
+        }
+
+        isSorting = true
+        sortGeneration += 1
+        let generation = sortGeneration
+        let snapshot = paths
+        let requestCurrentPath = currentPath
+        let sortMode = self.sortMode
+
+        sortQueue.async { [weak self] in
+            guard let self = self else { return }
+            let sorted = self.sortedPaths(snapshot, mode: sortMode)
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                guard generation == self.sortGeneration else { return }
+                self.applySortedPaths(sorted, preferredPath: self.currentPath ?? requestCurrentPath)
             }
-        } else if !paths.isEmpty {
+        }
+    }
+
+    private func sortedPaths(_ input: [String], mode: SortMode) -> [String] {
+        var sorted = input
+        switch mode {
+        case .name:
+            sorted.sort()
+        case .chrono:
+            sortByExifDate(paths: &sorted, reverse: false)
+        case .reverseChrono:
+            sortByExifDate(paths: &sorted, reverse: true)
+        }
+        return sorted
+    }
+
+    private func applySortedPaths(_ sorted: [String], preferredPath: String?) {
+        let filtered = sorted.filter { !deletedPaths.contains($0) }
+        paths = filtered
+
+        if let preferredPath, let index = paths.firstIndex(of: preferredPath) {
+            currentIndex = index
+        } else {
+            clampCurrentIndex()
+        }
+
+        isSorting = false
+        onEnumerationComplete?(paths.count)
+    }
+
+    private func clampCurrentIndex() {
+        if !paths.isEmpty {
             currentIndex = max(0, min(currentIndex, paths.count - 1))
         } else {
             currentIndex = 0
         }
-        isEnumerating = false
-        onEnumerationComplete?(paths.count)
     }
+
+    private func sortByExifDate(paths: inout [String], reverse: Bool) {
+        paths.sort { lhs, rhs in
+            let lhsDate = exifCaptureDate(for: lhs)
+            let rhsDate = exifCaptureDate(for: rhs)
+
+            switch (lhsDate, rhsDate) {
+            case let (lhs?, rhs?):
+                if lhs != rhs {
+                    return reverse ? lhs > rhs : lhs < rhs
+                }
+            case (.some, .none):
+                return true
+            case (.none, .some):
+                return false
+            case (.none, .none):
+                break
+            }
+
+            return lhs.localizedStandardCompare(rhs) == .orderedAscending
+        }
+    }
+
+    private func exifCaptureDate(for path: String) -> Date? {
+        if let cached = exifDateCache[path] {
+            return cached
+        }
+        let parsed = Self.readExifCaptureDate(for: path)
+        exifDateCache[path] = parsed
+        return parsed
+    }
+
+    private static func readExifCaptureDate(for path: String) -> Date? {
+        let url = URL(fileURLWithPath: path)
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] else {
+            return nil
+        }
+
+        let exif = properties[kCGImagePropertyExifDictionary] as? [CFString: Any] ?? [:]
+        if let date = parseExifDate(exif[kCGImagePropertyExifDateTimeOriginal]) {
+            return date
+        }
+        if let date = parseExifDate(exif[kCGImagePropertyExifDateTimeDigitized]) {
+            return date
+        }
+
+        let tiff = properties[kCGImagePropertyTIFFDictionary] as? [CFString: Any] ?? [:]
+        if let date = parseExifDate(tiff[kCGImagePropertyTIFFDateTime]) {
+            return date
+        }
+        return nil
+    }
+
+    private static func parseExifDate(_ value: Any?) -> Date? {
+        guard let raw = value as? String else { return nil }
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+        for formatter in exifDateFormatters {
+            if let date = formatter.date(from: text) {
+                return date
+            }
+        }
+        return nil
+    }
+
+    private static let exifDateFormatters: [DateFormatter] = {
+        func makeFormatter(_ format: String) -> DateFormatter {
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.timeZone = TimeZone(secondsFromGMT: 0)
+            formatter.dateFormat = format
+            return formatter
+        }
+
+        return [
+            makeFormatter("yyyy:MM:dd HH:mm:ss"),
+            makeFormatter("yyyy:MM:dd HH:mm:ssZ"),
+            makeFormatter("yyyy:MM:dd HH:mm:ssXXXXX"),
+            makeFormatter("yyyy-MM-dd HH:mm:ss"),
+            makeFormatter("yyyy-MM-dd HH:mm:ssZ"),
+            makeFormatter("yyyy-MM-dd'T'HH:mm:ss"),
+            makeFormatter("yyyy-MM-dd'T'HH:mm:ssZ"),
+            makeFormatter("yyyy-MM-dd'T'HH:mm:ssXXXXX")
+        ]
+    }()
 
     private func elapsedMs(since start: DispatchTime) -> Double {
         Double(DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds) / 1_000_000
