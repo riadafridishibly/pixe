@@ -5,6 +5,16 @@ class ImageList {
     private var paths: [String] = []
     private(set) var currentIndex: Int = 0
 
+    // Async enumeration state
+    private(set) var isEnumerating: Bool = false
+    private(set) var hasDirectoryArguments: Bool = false
+    private var deletedPaths: Set<String> = []
+    private var directoryArgs: [(path: String, config: Config)] = []
+
+    // Callbacks for incremental updates
+    var onBatchAdded: ((Int) -> Void)?
+    var onEnumerationComplete: ((Int) -> Void)?
+
     var count: Int { paths.count }
     var isEmpty: Bool { paths.isEmpty }
     var allPaths: [String] { paths }
@@ -32,7 +42,8 @@ class ImageList {
             }
 
             if isDirectory.boolValue {
-                enumerateDirectory(at: path, fileManager: fileManager, config: config)
+                hasDirectoryArguments = true
+                directoryArgs.append((path: path, config: config))
             } else {
                 if ImageLoader.isImageFile(path) && config.extensionFilter.accepts(path) {
                     paths.append(path)
@@ -41,7 +52,24 @@ class ImageList {
         }
     }
 
-    private func enumerateDirectory(at path: String, fileManager: FileManager, config: Config) {
+    func startEnumerationIfNeeded() {
+        guard hasDirectoryArguments, !directoryArgs.isEmpty else { return }
+        isEnumerating = true
+        let dirs = directoryArgs
+        directoryArgs = []
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            for dir in dirs {
+                self?.enumerateDirectoryAsync(at: dir.path, config: dir.config)
+            }
+            DispatchQueue.main.async { [weak self] in
+                self?.sortAndReindex()
+            }
+        }
+    }
+
+    private func enumerateDirectoryAsync(at path: String, config: Config) {
+        let fileManager = FileManager.default
         let url = URL(fileURLWithPath: path)
         let keys: [URLResourceKey] = [.isRegularFileKey, .contentTypeKey]
         guard let enumerator = fileManager.enumerator(
@@ -50,7 +78,11 @@ class ImageList {
             options: [.skipsHiddenFiles, .skipsPackageDescendants]
         ) else { return }
 
-        var discovered: [String] = []
+        var staging: [String] = []
+        var lastFlush = DispatchTime.now()
+        let batchSize = 100
+        let flushInterval: UInt64 = 200 * 1_000_000 // 200ms in nanoseconds
+
         for case let fileURL as URL in enumerator {
             guard let values = try? fileURL.resourceValues(forKeys: Set(keys)),
                   let isFile = values.isRegularFile, isFile,
@@ -59,10 +91,46 @@ class ImageList {
                 continue
             }
             guard config.extensionFilter.accepts(fileURL.path) else { continue }
-            discovered.append(fileURL.path)
+            staging.append(fileURL.path)
+
+            let elapsed = DispatchTime.now().uptimeNanoseconds - lastFlush.uptimeNanoseconds
+            if staging.count >= batchSize || elapsed >= flushInterval {
+                let batch = staging
+                staging = []
+                lastFlush = DispatchTime.now()
+                DispatchQueue.main.sync { [weak self] in
+                    self?.flushBatch(batch)
+                }
+            }
         }
-        discovered.sort()
-        paths.append(contentsOf: discovered)
+
+        // Flush remaining
+        if !staging.isEmpty {
+            let batch = staging
+            DispatchQueue.main.sync { [weak self] in
+                self?.flushBatch(batch)
+            }
+        }
+    }
+
+    private func flushBatch(_ batch: [String]) {
+        let filtered = batch.filter { !deletedPaths.contains($0) }
+        guard !filtered.isEmpty else { return }
+        paths.append(contentsOf: filtered)
+        onBatchAdded?(paths.count)
+    }
+
+    private func sortAndReindex() {
+        let currentPathBeforeSort = currentPath
+        paths.sort()
+        if let savedPath = currentPathBeforeSort,
+           let newIndex = paths.firstIndex(of: savedPath) {
+            currentIndex = newIndex
+        } else if !paths.isEmpty {
+            currentIndex = 0
+        }
+        isEnumerating = false
+        onEnumerationComplete?(paths.count)
     }
 
     func goNext() {
@@ -93,6 +161,7 @@ class ImageList {
     func remove(at index: Int) -> String? {
         guard index >= 0 && index < paths.count else { return nil }
         let removed = paths.remove(at: index)
+        deletedPaths.insert(removed)
         if paths.isEmpty {
             currentIndex = 0
         } else if index < currentIndex {

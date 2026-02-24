@@ -45,6 +45,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(metalView)
         NSApp.activate(ignoringOtherApps: true)
+
+        imageList.startEnumerationIfNeeded()
     }
 
     func applicationWillTerminate(_ notification: Notification) {

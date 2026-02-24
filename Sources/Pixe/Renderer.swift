@@ -30,11 +30,12 @@ class Renderer: NSObject, MTKViewDelegate {
 
     var currentTexture: MTLTexture?
     let imageList: ImageList
+    let config: Config
     weak var window: ImageWindow?
 
     // View mode
     var mode: ViewMode
-    var hasMultipleImages: Bool { imageList.count > 1 }
+    var hasMultipleImages: Bool { imageList.count > 1 || imageList.isEnumerating || imageList.hasDirectoryArguments }
 
     // Grid
     let gridLayout = GridLayout()
@@ -69,6 +70,7 @@ class Renderer: NSObject, MTKViewDelegate {
         self.device = device
         self.commandQueue = device.makeCommandQueue()!
         self.imageList = imageList
+        self.config = config
         self.mode = initialMode
         // Conservative default matching 800×600 window at 2× scale.
         // The real drawable size arrives via mtkView(_:drawableSizeWillChange:).
@@ -78,9 +80,45 @@ class Renderer: NSObject, MTKViewDelegate {
         setupVertexBuffer()
         setupSampler()
 
-        if hasMultipleImages {
+        if hasMultipleImages || imageList.hasDirectoryArguments {
             thumbnailCache = ThumbnailCache(device: device, config: config)
             gridLayout.totalItems = imageList.count
+        }
+
+        setupEnumerationCallbacks()
+    }
+
+    private func setupEnumerationCallbacks() {
+        imageList.onBatchAdded = { [weak self] totalCount in
+            guard let self = self else { return }
+            self.gridLayout.totalItems = totalCount
+            if self.thumbnailCache == nil {
+                self.thumbnailCache = ThumbnailCache(device: self.device, config: self.config)
+            }
+            self.updateWindowTitle()
+            if let view = self.window?.contentView as? MTKView {
+                view.needsDisplay = true
+            }
+        }
+
+        imageList.onEnumerationComplete = { [weak self] totalCount in
+            guard let self = self else { return }
+            if totalCount == 0 && self.imageList.isEmpty {
+                NSApp.terminate(nil)
+                return
+            }
+            if totalCount == 1 && self.imageList.count == 1 {
+                self.enterImageMode(at: 0)
+                return
+            }
+            // Sort changed indices — invalidate thumbnail cache
+            self.thumbnailCache?.invalidateAll()
+            self.gridLayout.totalItems = self.imageList.count
+            self.gridLayout.clampScroll()
+            self.updateWindowTitle()
+            if let view = self.window?.contentView as? MTKView {
+                view.needsDisplay = true
+            }
         }
     }
 
@@ -311,13 +349,18 @@ class Renderer: NSObject, MTKViewDelegate {
     }
 
     func updateWindowTitle() {
+        let scanning = imageList.isEnumerating
         switch mode {
         case .image:
             guard let path = imageList.currentPath else { return }
             let filename = (path as NSString).lastPathComponent
             window?.updateTitle(filename: filename, index: imageList.currentIndex, total: imageList.count)
         case .thumbnail:
-            window?.title = "pixe [\(imageList.count) images]"
+            if scanning {
+                window?.title = "pixe [\(imageList.count) images] scanning..."
+            } else {
+                window?.title = "pixe [\(imageList.count) images]"
+            }
         }
         updateInfoBar()
     }
@@ -361,13 +404,20 @@ class Renderer: NSObject, MTKViewDelegate {
 
     func updateInfoBar() {
         hideImageInfo()
+        let scanning = imageList.isEnumerating
         switch mode {
         case .thumbnail:
-            guard !imageList.allPaths.isEmpty else { return }
+            if imageList.allPaths.isEmpty {
+                if scanning {
+                    window?.updateInfo("scanning...")
+                }
+                return
+            }
             let index = gridLayout.selectedIndex
             let path = imageList.allPaths[min(index, imageList.allPaths.count - 1)]
             let dir = shortenPath((path as NSString).deletingLastPathComponent)
-            window?.updateInfo("\(dir) \u{2014} \(imageList.count) images")
+            let suffix = scanning ? " scanning..." : ""
+            window?.updateInfo("\(dir) \u{2014} \(imageList.count) images\(suffix)")
         case .image:
             guard let path = imageList.currentPath else { return }
             let filename = (path as NSString).lastPathComponent
