@@ -97,29 +97,51 @@ private struct FDDirectoryWalker: DirectoryImageWalking {
             return false
         }
 
-        let output = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-
-        // fd commonly exits with 1 when there are no matches.
-        guard process.terminationReason == .exit, process.terminationStatus == 0 || process.terminationStatus == 1 else {
-            return false
-        }
-
+        let stdout = stdoutPipe.fileHandleForReading
+        var partialPathBytes: [UInt8] = []
+        partialPathBytes.reserveCapacity(256)
         var batch: [String] = []
         batch.reserveCapacity(1000)
+        var emittedAny = false
 
-        for item in output.split(separator: 0) {
-            let path = String(decoding: item, as: UTF8.self)
-            guard !path.isEmpty, config.extensionFilter.accepts(path) else { continue }
+        func emitCurrentPathIfNeeded() {
+            guard !partialPathBytes.isEmpty else { return }
+            let path = String(decoding: partialPathBytes, as: UTF8.self)
+            partialPathBytes.removeAll(keepingCapacity: true)
+            guard !path.isEmpty, config.extensionFilter.accepts(path) else { return }
             batch.append(path)
             if batch.count >= 1000 {
                 emitBatch(batch)
+                emittedAny = true
                 batch.removeAll(keepingCapacity: true)
             }
         }
 
+        while true {
+            let chunk = stdout.availableData
+            if chunk.isEmpty { break }  // EOF
+            for byte in chunk {
+                if byte == 0 {
+                    emitCurrentPathIfNeeded()
+                } else {
+                    partialPathBytes.append(byte)
+                }
+            }
+        }
+        // Handle output that doesn't end with '\0' (defensive).
+        emitCurrentPathIfNeeded()
+
+        process.waitUntilExit()
+
+        // fd commonly exits with 1 when there are no matches.
+        guard process.terminationReason == .exit, process.terminationStatus == 0 || process.terminationStatus == 1 else {
+            // If partial output was already emitted, treat as handled and avoid fallback duplicates.
+            return emittedAny
+        }
+
         if !batch.isEmpty {
             emitBatch(batch)
+            emittedAny = true
         }
 
         return true

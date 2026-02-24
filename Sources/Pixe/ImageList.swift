@@ -81,18 +81,20 @@ class ImageList {
                 .sorted { $0.key < $1.key }
                 .map { "\($0.key):\($0.value)" }
                 .joined(separator: ",")
+            let usedOnlyFD = perStrategyDirCount.count == 1 && perStrategyDirCount["fd"] == dirs.count
             MemoryProfiler.logPerf(
                 String(
-                    format: "traverse total %.1fms dirs=%d files=%d strategies=[%@]",
+                    format: "traverse total %.1fms dirs=%d files=%d strategies=[%@] finalSort=%@",
                     elapsedMs(since: traversalStart),
                     dirs.count,
                     totalFound,
-                    strategySummary
+                    strategySummary,
+                    usedOnlyFD ? "skip" : "sort"
                 )
             )
 
             DispatchQueue.main.async { [weak self] in
-                self?.sortAndReindex()
+                self?.sortAndReindex(shouldSort: !usedOnlyFD)
             }
         }
     }
@@ -146,13 +148,19 @@ class ImageList {
         onBatchAdded?(paths.count)
     }
 
-    private func sortAndReindex() {
-        let currentPathBeforeSort = currentPath
-        paths.sort()
-        if let savedPath = currentPathBeforeSort,
-           let newIndex = paths.firstIndex(of: savedPath) {
-            currentIndex = newIndex
+    private func sortAndReindex(shouldSort: Bool = true) {
+        if shouldSort {
+            let currentPathBeforeSort = currentPath
+            paths.sort()
+            if let savedPath = currentPathBeforeSort,
+               let newIndex = paths.firstIndex(of: savedPath) {
+                currentIndex = newIndex
+            } else if !paths.isEmpty {
+                currentIndex = 0
+            }
         } else if !paths.isEmpty {
+            currentIndex = max(0, min(currentIndex, paths.count - 1))
+        } else {
             currentIndex = 0
         }
         isEnumerating = false
