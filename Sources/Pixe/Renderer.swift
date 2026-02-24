@@ -65,6 +65,7 @@ class Renderer: NSObject, MTKViewDelegate {
     private var prefetchLoading: Set<String> = []  // paths currently being loaded (prevents double decode)
     private var currentLoadTask: DispatchWorkItem?
     private var loadGeneration: Int = 0  // increments on each navigation, stale tasks bail out
+    private var thumbnailSearchQuery: String?
 
     init(device: MTLDevice, imageList: ImageList, initialMode: ViewMode, config: Config) {
         self.device = device
@@ -417,7 +418,11 @@ class Renderer: NSObject, MTKViewDelegate {
             let path = imageList.allPaths[min(index, imageList.allPaths.count - 1)]
             let dir = shortenPath((path as NSString).deletingLastPathComponent)
             let suffix = scanning ? " scanning..." : ""
-            window?.updateInfo("\(dir) \u{2014} \(imageList.count) images\(suffix)")
+            var text = "\(dir) \u{2014} \(imageList.count) images\(suffix)"
+            if let query = thumbnailSearchQuery {
+                text += query.isEmpty ? " \u{2014} /" : " \u{2014} /\(query)"
+            }
+            window?.updateInfo(text)
         case .image:
             guard let path = imageList.currentPath else { return }
             let filename = (path as NSString).lastPathComponent
@@ -428,6 +433,11 @@ class Renderer: NSObject, MTKViewDelegate {
             text += " \u{2014} [\(imageList.currentIndex + 1)/\(imageList.count)]"
             window?.updateInfo(text)
         }
+    }
+
+    func setThumbnailSearchQuery(_ query: String?) {
+        thumbnailSearchQuery = query
+        updateInfoBar()
     }
 
     private func shortenPath(_ path: String) -> String {

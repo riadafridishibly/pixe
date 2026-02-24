@@ -102,7 +102,7 @@ pixe --no-cache ~/project      # Skip disk cache
 | `n` / `p` | Page down / up |
 | `Space` / Scroll | Page down / scroll |
 | `+` `-` `0` | Thumbnail zoom in / out / reset |
-| `/` then type | Jump to filename prefix (Esc to clear) |
+| `/` then type | Search by filename prefix (`Enter` keep, `Esc` cancel/restore) |
 | `d` | Delete image (move to trash) |
 | `o` | Reveal in Finder |
 | `i` | Toggle image info |

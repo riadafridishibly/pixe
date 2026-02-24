@@ -5,9 +5,8 @@ class InputHandler {
     weak var renderer: Renderer?
     private var magnificationAnchor: Float = 1.0
     private var filenameSearchBuffer = ""
-    private var filenameSearchForced = false
-    private var filenameSearchLastInputNs: UInt64 = 0
-    private let filenameSearchTimeoutNs: UInt64 = 1_200_000_000
+    private var filenameSearchActive = false
+    private var filenameSearchStartIndex: Int?
 
     init(renderer: Renderer) {
         self.renderer = renderer
@@ -30,12 +29,13 @@ class InputHandler {
         guard let renderer = renderer else { return }
         guard let chars = event.charactersIgnoringModifiers else { return }
 
-        expireFilenameSearchIfNeeded()
-
         if handleFilenameSearchControl(event: event, view: view) {
             return
         }
         if handleFilenameSearchCharacter(event: event, view: view) {
+            return
+        }
+        if filenameSearchActive {
             return
         }
 
@@ -124,21 +124,31 @@ class InputHandler {
 
         switch event.keyCode {
         case 53:  // Escape
-            if filenameSearchForced || !filenameSearchBuffer.isEmpty {
-                clearFilenameSearch()
+            if filenameSearchActive {
+                cancelFilenameSearch(renderer: renderer, view: view)
                 return true
             }
             return false
 
         case 51, 117:  // Backspace / Forward delete
-            guard !filenameSearchBuffer.isEmpty else { return false }
+            guard filenameSearchActive else { return false }
+            guard !filenameSearchBuffer.isEmpty else { return true }
             filenameSearchBuffer.removeLast()
-            filenameSearchLastInputNs = DispatchTime.now().uptimeNanoseconds
-            if filenameSearchBuffer.isEmpty {
-                filenameSearchForced = false
+            if filenameSearchBuffer.isEmpty,
+               let start = filenameSearchStartIndex,
+               start < renderer.imageList.count {
+                renderer.gridLayout.selectedIndex = start
+                renderer.gridLayout.scrollToSelection()
             } else {
                 jumpToFilenameMatch(prefix: filenameSearchBuffer, renderer: renderer, view: view)
             }
+            renderer.setThumbnailSearchQuery(filenameSearchBuffer)
+            view.needsDisplay = true
+            return true
+
+        case 36, 76:  // Return / Enter
+            guard filenameSearchActive else { return false }
+            commitFilenameSearch(renderer: renderer, view: view)
             return true
 
         default:
@@ -146,9 +156,11 @@ class InputHandler {
         }
 
         if event.charactersIgnoringModifiers == "/" {
-            filenameSearchForced = true
+            filenameSearchActive = true
             filenameSearchBuffer = ""
-            filenameSearchLastInputNs = DispatchTime.now().uptimeNanoseconds
+            filenameSearchStartIndex = renderer.gridLayout.selectedIndex
+            renderer.setThumbnailSearchQuery("")
+            view.needsDisplay = true
             return true
         }
 
@@ -157,6 +169,7 @@ class InputHandler {
 
     private func handleFilenameSearchCharacter(event: NSEvent, view: MTKView) -> Bool {
         guard let renderer = renderer else { return false }
+        guard filenameSearchActive else { return false }
         guard isSearchEvent(event) else { return false }
         guard let chars = event.charactersIgnoringModifiers, chars.count == 1, let c = chars.first else {
             return false
@@ -164,16 +177,9 @@ class InputHandler {
         guard isSearchCharacter(c) else { return false }
 
         let normalized = String(c).lowercased()
-        if !filenameSearchForced && isReservedThumbnailKey(normalized) {
-            return false
-        }
-
-        if !filenameSearchForced && isSearchExpired() {
-            filenameSearchBuffer = ""
-        }
         filenameSearchBuffer += normalized
-        filenameSearchLastInputNs = DispatchTime.now().uptimeNanoseconds
         jumpToFilenameMatch(prefix: filenameSearchBuffer, renderer: renderer, view: view)
+        renderer.setThumbnailSearchQuery(filenameSearchBuffer)
         return true
     }
 
@@ -182,14 +188,14 @@ class InputHandler {
         let paths = renderer.imageList.allPaths
         guard !paths.isEmpty else { return }
 
-        let start = (renderer.gridLayout.selectedIndex + 1) % paths.count
+        let anchor = filenameSearchStartIndex ?? renderer.gridLayout.selectedIndex
+        let start = (anchor + 1) % paths.count
         for offset in 0..<paths.count {
             let idx = (start + offset) % paths.count
             let name = (paths[idx] as NSString).lastPathComponent.lowercased()
             if name.hasPrefix(prefix) {
                 renderer.gridLayout.selectedIndex = idx
                 renderer.gridLayout.scrollToSelection()
-                renderer.updateInfoBar()
                 view.needsDisplay = true
                 return
             }
@@ -203,32 +209,29 @@ class InputHandler {
 
     private func isSearchCharacter(_ c: Character) -> Bool {
         c.unicodeScalars.allSatisfy { scalar in
-            scalar.isASCII && scalar.value >= 33 && scalar.value <= 126
+            scalar.isASCII && scalar.value >= 32 && scalar.value <= 126
         }
     }
 
-    private func isReservedThumbnailKey(_ normalized: String) -> Bool {
-        let reserved: Set<String> = [
-            "q", "f", "h", "j", "k", "l", "o", "i", "d", "n", "p", "m", "g", " ", "+", "=", "-", "0"
-        ]
-        return reserved.contains(normalized)
+    private func cancelFilenameSearch(renderer: Renderer, view: MTKView) {
+        if let index = filenameSearchStartIndex, index < renderer.imageList.count {
+            renderer.gridLayout.selectedIndex = index
+            renderer.gridLayout.scrollToSelection()
+        }
+        clearFilenameSearch(renderer: renderer)
+        view.needsDisplay = true
     }
 
-    private func isSearchExpired() -> Bool {
-        guard filenameSearchLastInputNs != 0 else { return true }
-        let now = DispatchTime.now().uptimeNanoseconds
-        return now - filenameSearchLastInputNs > filenameSearchTimeoutNs
+    private func commitFilenameSearch(renderer: Renderer, view: MTKView) {
+        clearFilenameSearch(renderer: renderer)
+        view.needsDisplay = true
     }
 
-    private func expireFilenameSearchIfNeeded() {
-        guard (filenameSearchForced || !filenameSearchBuffer.isEmpty), isSearchExpired() else { return }
-        clearFilenameSearch()
-    }
-
-    private func clearFilenameSearch() {
+    private func clearFilenameSearch(renderer: Renderer) {
         filenameSearchBuffer = ""
-        filenameSearchForced = false
-        filenameSearchLastInputNs = 0
+        filenameSearchActive = false
+        filenameSearchStartIndex = nil
+        renderer.setThumbnailSearchQuery(nil)
     }
 
     private func handleThumbnailArrowKeys(keyCode: UInt16, view: MTKView) {
