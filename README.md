@@ -2,9 +2,8 @@
 
 ```
  ┌─┬─┬─┐
- │█│░│█│  P I X E
- │░│█│░│  GPU-accelerated image viewer for macOS
- │█│░│█│
+ │░│█│░│  P I X E
+ │█│░│█│  GPU-accelerated image viewer for macOS
  └─┴─┴─┘
 ```
 
