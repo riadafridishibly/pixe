@@ -14,7 +14,7 @@ enum ImageLoader {
     ) -> MTLTexture? {
         if isRawFile(path) {
             // Use embedded JPEG preview — no CIImage/CIContext Metal leak
-            if let preview = loadPreviewTexture(from: path, device: device, commandQueue: commandQueue) {
+            if let preview = loadPreviewTexture(from: path, device: device, maxPixelSize: maxPixelSize) {
                 return preview
             }
             // Fallback: decode RAW at reduced resolution via ImageIO
@@ -304,7 +304,7 @@ enum ImageLoader {
     }
 
     static func loadPreviewTexture(
-        from path: String, device: MTLDevice, commandQueue: MTLCommandQueue
+        from path: String, device: MTLDevice, maxPixelSize: Int
     ) -> MTLTexture? {
         return autoreleasepool { () -> MTLTexture? in
             let url = URL(fileURLWithPath: path)
@@ -313,10 +313,16 @@ enum ImageLoader {
             // Extract embedded JPEG preview — do NOT set CreateThumbnailFromImageAlways
             // which would force a full RAW decode
             let options: [CFString: Any] = [
+                kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
                 kCGImageSourceCreateThumbnailWithTransform: true,
             ]
-            guard let preview = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary),
-                  preview.width >= 1024 || preview.height >= 1024 else {
+            guard let preview = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
+                return nil
+            }
+            let longSide = max(preview.width, preview.height)
+            let requiredLongSide = max(1536, Int(Double(maxPixelSize) * 0.9))
+            guard longSide >= requiredLongSide else {
+                CGImageSourceRemoveCacheAtIndex(source, 0)
                 return nil
             }
             MemoryProfiler.logEvent("loadPreview: \(preview.width)×\(preview.height) from \((path as NSString).lastPathComponent)", device: device)

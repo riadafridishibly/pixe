@@ -188,6 +188,33 @@ final class MetadataStore {
         }
     }
 
+    func cachedExifWithoutSignature(path: String) -> ExifMetadataValue? {
+        queue.sync {
+            let sql = """
+            SELECT exif_capture_ts, exif_checked
+            FROM image_meta
+            WHERE path = ?1
+            LIMIT 1;
+            """
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt else {
+                return nil
+            }
+            defer { sqlite3_finalize(stmt) }
+
+            sqlite3_bind_text(stmt, 1, path, -1, sqliteTransient)
+            guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+
+            let checked = sqlite3_column_int(stmt, 1) != 0
+            guard checked else { return nil }
+            if sqlite3_column_type(stmt, 0) == SQLITE_NULL {
+                return .missing
+            }
+            let ts = sqlite3_column_double(stmt, 0)
+            return .date(Date(timeIntervalSince1970: ts))
+        }
+    }
+
     func upsertExif(path: String, mtime: Double, fileSize: Int64, captureDate: Date?) {
         queue.sync {
             let sql = """
@@ -220,6 +247,66 @@ final class MetadataStore {
         }
     }
 
+    func cachedDirectoryEntries(dirPath: String, filter: ExtensionFilter) -> [String] {
+        queue.sync {
+            let sql = """
+            SELECT path
+            FROM directory_entries
+            WHERE dir_path = ?1;
+            """
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt else {
+                return []
+            }
+            defer { sqlite3_finalize(stmt) }
+
+            sqlite3_bind_text(stmt, 1, dirPath, -1, sqliteTransient)
+            var paths: [String] = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                guard let cstr = sqlite3_column_text(stmt, 0) else { continue }
+                let path = String(cString: cstr)
+                guard filter.accepts(path) else { continue }
+                paths.append(path)
+            }
+            return paths
+        }
+    }
+
+    func replaceDirectoryEntries(dirPath: String, paths: [String]) {
+        queue.sync {
+            guard exec("BEGIN IMMEDIATE TRANSACTION;") else { return }
+
+            var deleteStmt: OpaquePointer?
+            if sqlite3_prepare_v2(db, "DELETE FROM directory_entries WHERE dir_path = ?1;", -1, &deleteStmt, nil) == SQLITE_OK,
+               let deleteStmt {
+                sqlite3_bind_text(deleteStmt, 1, dirPath, -1, sqliteTransient)
+                _ = sqlite3_step(deleteStmt)
+                sqlite3_finalize(deleteStmt)
+            }
+
+            let insertSQL = """
+            INSERT OR IGNORE INTO directory_entries(dir_path, path, updated_at)
+            VALUES(?1, ?2, ?3);
+            """
+            var insertStmt: OpaquePointer?
+            if sqlite3_prepare_v2(db, insertSQL, -1, &insertStmt, nil) == SQLITE_OK,
+               let insertStmt {
+                let now = Date().timeIntervalSince1970
+                for path in paths {
+                    sqlite3_reset(insertStmt)
+                    sqlite3_clear_bindings(insertStmt)
+                    sqlite3_bind_text(insertStmt, 1, dirPath, -1, sqliteTransient)
+                    sqlite3_bind_text(insertStmt, 2, path, -1, sqliteTransient)
+                    sqlite3_bind_double(insertStmt, 3, now)
+                    _ = sqlite3_step(insertStmt)
+                }
+                sqlite3_finalize(insertStmt)
+            }
+
+            _ = exec("COMMIT;")
+        }
+    }
+
     private func migrateSchema() -> Bool {
         exec(
             """
@@ -247,6 +334,18 @@ final class MetadataStore {
             );
             """
         ) &&
+        exec(
+            """
+            CREATE TABLE IF NOT EXISTS directory_entries (
+                dir_path TEXT NOT NULL,
+                path TEXT NOT NULL,
+                updated_at REAL NOT NULL,
+                PRIMARY KEY(dir_path, path)
+            );
+            """
+        ) &&
+        exec("CREATE INDEX IF NOT EXISTS idx_directory_entries_path ON directory_entries(path);") &&
+        exec("CREATE INDEX IF NOT EXISTS idx_directory_entries_dir ON directory_entries(dir_path);") &&
         exec("CREATE INDEX IF NOT EXISTS idx_image_exif_capture ON image_meta(exif_capture_ts);")
     }
 

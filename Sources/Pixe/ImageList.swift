@@ -18,9 +18,13 @@ class ImageList {
     private(set) var isSorting: Bool = false
     private(set) var hasDirectoryArguments: Bool = false
     private var deletedPaths: Set<String> = []
+    private var knownPaths: Set<String> = []
+    private var explicitFilePaths: Set<String> = []
     private var directoryArgs: [(path: String, config: Config)] = []
     private var exifDateCache: [String: ExifMetadataValue] = [:]
     private let metadataStore: MetadataStore?
+    private var deferredDiscoveredPaths: [String] = []
+    private var deferLiveBatchesUntilFinalSort = false
 
     // Callbacks for incremental updates
     var onBatchAdded: ((Int) -> Void)?
@@ -57,11 +61,26 @@ class ImageList {
             if isDirectory.boolValue {
                 hasDirectoryArguments = true
                 directoryArgs.append((path: path, config: config))
+                if let cached = metadataStore?.cachedDirectoryEntries(dirPath: path, filter: config.extensionFilter) {
+                    for cachedPath in cached where !deletedPaths.contains(cachedPath) {
+                        if knownPaths.insert(cachedPath).inserted {
+                            paths.append(cachedPath)
+                        }
+                    }
+                }
             } else {
                 if ImageLoader.isImageFile(path) && config.extensionFilter.accepts(path) {
-                    paths.append(path)
+                    if knownPaths.insert(path).inserted {
+                        paths.append(path)
+                        explicitFilePaths.insert(path)
+                    }
                 }
             }
+        }
+
+        if hasDirectoryArguments, !paths.isEmpty {
+            paths = sortPathsWithCachedMetadata(paths, mode: sortMode)
+            deferLiveBatchesUntilFinalSort = true
         }
     }
 
@@ -85,10 +104,12 @@ class ImageList {
 
             var totalFound = 0
             var perStrategyDirCount: [String: Int] = [:]
+            var discoveredByDirectory: [(dirPath: String, discovered: Set<String>)] = []
             for dir in dirs {
                 if let result = self.enumerateDirectoryAsync(at: dir.path, config: dir.config) {
                     totalFound += result.fileCount
                     perStrategyDirCount[result.strategy, default: 0] += 1
+                    discoveredByDirectory.append((dirPath: dir.path, discovered: Set(result.discoveredPaths)))
                 }
             }
 
@@ -110,6 +131,7 @@ class ImageList {
             )
 
             DispatchQueue.main.async { [weak self] in
+                self?.reconcileScannedDirectories(discoveredByDirectory)
                 self?.isEnumerating = false
                 self?.finalizeList(shouldSort: shouldSort)
             }
@@ -128,14 +150,16 @@ class ImageList {
         return true
     }
 
-    private func enumerateDirectoryAsync(at path: String, config: Config) -> (strategy: String, fileCount: Int)? {
+    private func enumerateDirectoryAsync(at path: String, config: Config) -> (strategy: String, fileCount: Int, discoveredPaths: [String])? {
         let pendingMainBatches = DispatchGroup()
         let walkStart = DispatchTime.now()
         var foundCount = 0
+        var discoveredPaths: [String] = []
 
         guard let strategy = ImageDirectoryWalker.walk(at: path, config: config, emitBatch: { [weak self] batch in
             guard !batch.isEmpty else { return }
             foundCount += batch.count
+            discoveredPaths.append(contentsOf: batch)
             pendingMainBatches.enter()
             DispatchQueue.main.async { [weak self] in
                 defer { pendingMainBatches.leave() }
@@ -151,6 +175,7 @@ class ImageList {
         }
 
         pendingMainBatches.wait()
+        metadataStore?.replaceDirectoryEntries(dirPath: path, paths: discoveredPaths)
         MemoryProfiler.logPerf(
             String(
                 format: "traverse %.1fms strategy=%@ files=%d path=%@",
@@ -160,21 +185,61 @@ class ImageList {
                 path
             )
         )
-        return (strategy: strategy, fileCount: foundCount)
+        return (strategy: strategy, fileCount: foundCount, discoveredPaths: discoveredPaths)
     }
 
     private func flushBatch(_ batch: [String]) {
-        let filtered = batch.filter { !deletedPaths.contains($0) }
+        let filtered = batch.filter { !deletedPaths.contains($0) && knownPaths.insert($0).inserted }
         guard !filtered.isEmpty else { return }
+
+        if deferLiveBatchesUntilFinalSort {
+            deferredDiscoveredPaths.append(contentsOf: filtered)
+            return
+        }
+
         paths.append(contentsOf: filtered)
         onBatchAdded?(paths.count)
     }
 
+    private func reconcileScannedDirectories(_ scanned: [(dirPath: String, discovered: Set<String>)]) {
+        guard !scanned.isEmpty else { return }
+        let reconciled = paths.filter { path in
+            if explicitFilePaths.contains(path) {
+                return true
+            }
+            for entry in scanned where isPath(path, insideDirectory: entry.dirPath) {
+                if entry.discovered.contains(path) {
+                    return true
+                }
+                return false
+            }
+            return true
+        }
+        paths = reconciled
+        knownPaths = Set(reconciled)
+        clampCurrentIndex()
+    }
+
+    private func isPath(_ path: String, insideDirectory dir: String) -> Bool {
+        if path == dir {
+            return true
+        }
+        let normalizedDir = dir.hasSuffix("/") ? String(dir.dropLast()) : dir
+        return path.hasPrefix(normalizedDir + "/")
+    }
+
     private func finalizeList(shouldSort: Bool) {
-        guard shouldSort else {
+        if !deferredDiscoveredPaths.isEmpty {
+            paths.append(contentsOf: deferredDiscoveredPaths)
+            deferredDiscoveredPaths.removeAll(keepingCapacity: true)
+        }
+        let effectiveShouldSort = shouldSort || deferLiveBatchesUntilFinalSort
+
+        guard effectiveShouldSort else {
             sortGeneration += 1
             isSorting = false
             clampCurrentIndex()
+            deferLiveBatchesUntilFinalSort = false
             onEnumerationComplete?(paths.count)
             return
         }
@@ -213,6 +278,7 @@ class ImageList {
     private func applySortedPaths(_ sorted: [String], preferredPath: String?) {
         let filtered = sorted.filter { !deletedPaths.contains($0) }
         paths = filtered
+        knownPaths = Set(filtered)
 
         if let preferredPath, let index = paths.firstIndex(of: preferredPath) {
             currentIndex = index
@@ -221,6 +287,7 @@ class ImageList {
         }
 
         isSorting = false
+        deferLiveBatchesUntilFinalSort = false
         onEnumerationComplete?(paths.count)
     }
 
@@ -258,6 +325,38 @@ class ImageList {
 
             return lhs.localizedStandardCompare(rhs) == .orderedAscending
         }
+    }
+
+    private func sortPathsWithCachedMetadata(_ input: [String], mode: SortMode) -> [String] {
+        guard mode.requiresExplicitSort else {
+            return input.sorted()
+        }
+        var sorted = input
+        var cachedByPath: [String: ExifMetadataValue] = [:]
+        cachedByPath.reserveCapacity(sorted.count)
+        for path in sorted where cachedByPath[path] == nil {
+            cachedByPath[path] = metadataStore?.cachedExifWithoutSignature(path: path) ?? .missing
+        }
+        let reverse = mode == .reverseChrono
+        sorted.sort { lhs, rhs in
+            let lhsDate = exifDate(from: cachedByPath[lhs] ?? .missing)
+            let rhsDate = exifDate(from: cachedByPath[rhs] ?? .missing)
+
+            switch (lhsDate, rhsDate) {
+            case let (lhs?, rhs?):
+                if lhs != rhs {
+                    return reverse ? lhs > rhs : lhs < rhs
+                }
+            case (.some, .none):
+                return true
+            case (.none, .some):
+                return false
+            case (.none, .none):
+                break
+            }
+            return lhs.localizedStandardCompare(rhs) == .orderedAscending
+        }
+        return sorted
     }
 
     private func exifDate(from value: ExifMetadataValue) -> Date? {
@@ -399,6 +498,7 @@ class ImageList {
         guard index >= 0 && index < paths.count else { return nil }
         let removed = paths.remove(at: index)
         deletedPaths.insert(removed)
+        knownPaths.remove(removed)
         exifDateCache.removeValue(forKey: removed)
         if paths.isEmpty {
             currentIndex = 0
