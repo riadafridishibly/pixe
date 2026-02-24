@@ -728,7 +728,7 @@ class Renderer: NSObject, MTKViewDelegate {
 
         // Trigger background loading for prefetch range
         let prefetch = gridLayout.prefetchRange()
-        cache.ensureLoaded(indices: prefetch, paths: imageList.allPaths) { [weak self] in
+        cache.ensureLoaded(indices: prefetch, pinnedIndices: visible, paths: imageList.allPaths) { [weak self] in
             if let view = self?.window?.contentView as? MTKView {
                 view.needsDisplay = true
             }

@@ -78,7 +78,8 @@ private struct ManifestEntry: Codable {
 
 class ThumbnailCache {
     let device: MTLDevice
-    let maxCached: Int = 300
+    let baseMaxCached: Int = 300
+    let hardMaxCached: Int = 1800
     let maxPixelSize: Int
 
     // In-memory texture cache
@@ -86,6 +87,8 @@ class ThumbnailCache {
     private(set) var aspects: [Int: Float] = [:]
     private var loading: Set<Int> = []
     private let lru = LRUList()
+    private var dynamicMaxCached: Int
+    private var pinnedVisibleRange: Range<Int> = 0..<0
 
     // Disk cache
     private let diskCacheEnabled: Bool
@@ -108,6 +111,7 @@ class ThumbnailCache {
     init(device: MTLDevice, config: Config) {
         self.device = device
         self.maxPixelSize = config.thumbSize
+        self.dynamicMaxCached = baseMaxCached
         self.diskCacheEnabled = config.diskCacheEnabled
         self.thumbDir = config.thumbDir
         self.manifestPath = (config.thumbDir as NSString).appendingPathComponent("manifest.json")
@@ -136,8 +140,10 @@ class ThumbnailCache {
         return aspects[index] ?? 1.0
     }
 
-    func ensureLoaded(indices: Range<Int>, paths: [String], completion: @escaping () -> Void) {
+    func ensureLoaded(indices: Range<Int>, pinnedIndices: Range<Int>, paths: [String], completion: @escaping () -> Void) {
         // Called from main thread only
+        updateDynamicBudget(prefetch: indices, pinned: pinnedIndices, totalPathCount: paths.count)
+
         var toLoad: [(Int, String)] = []
         for i in indices {
             guard i < paths.count else { continue }
@@ -146,13 +152,17 @@ class ThumbnailCache {
             toLoad.append((i, paths[i]))
         }
 
-        guard !toLoad.isEmpty else { return }
-
         stateLock.lock()
         currentGeneration += 1
         currentPrefetchRange = indices
         let generation = currentGeneration
         stateLock.unlock()
+
+        guard !toLoad.isEmpty else {
+            evictIfNeeded()
+            return
+        }
+
         let device = self.device
         let maxPixelSize = self.maxPixelSize
         let diskEnabled = self.diskCacheEnabled
@@ -275,16 +285,44 @@ class ThumbnailCache {
         aspects.removeAll()
         lru.removeAll()
         loading.removeAll()
+        dynamicMaxCached = baseMaxCached
+        pinnedVisibleRange = 0..<0
     }
 
     // MARK: - LRU Eviction
 
     private func evictIfNeeded() {
-        while cache.count > maxCached {
-            guard let oldest = lru.evictOldest() else { break }
-            cache.removeValue(forKey: oldest)
-            aspects.removeValue(forKey: oldest)
+        while cache.count > dynamicMaxCached {
+            let maxAttempts = lru.count
+            var attempts = 0
+            var evicted = false
+
+            while attempts < maxAttempts, let oldest = lru.evictOldest() {
+                attempts += 1
+                if pinnedVisibleRange.contains(oldest) {
+                    // Keep visible thumbnails resident to prevent flicker.
+                    lru.touch(oldest)
+                    continue
+                }
+                cache.removeValue(forKey: oldest)
+                aspects.removeValue(forKey: oldest)
+                evicted = true
+                break
+            }
+
+            // All remaining entries are pinned-visible; stop evicting.
+            if !evicted { break }
         }
+    }
+
+    private func updateDynamicBudget(prefetch: Range<Int>, pinned: Range<Int>, totalPathCount: Int) {
+        pinnedVisibleRange = pinned
+
+        let needed = max(prefetch.count, pinned.count)
+        let withSlack = needed + max(32, needed / 8)
+        let target = min(max(totalPathCount, baseMaxCached), hardMaxCached)
+        let newBudget = min(target, max(baseMaxCached, withSlack))
+        dynamicMaxCached = newBudget
     }
 
     // MARK: - Disk Cache
