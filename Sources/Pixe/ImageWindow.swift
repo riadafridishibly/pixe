@@ -1,7 +1,9 @@
 import AppKit
 
 private class PassthroughVisualEffectView: NSVisualEffectView {
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
+    }
 }
 
 class ImageWindow: NSWindow {
@@ -27,12 +29,12 @@ class ImageWindow: NSWindow {
         )
 
         self.contentView = contentView
-        self.backgroundColor = .black
-        self.titlebarAppearsTransparent = true
-        self.titleVisibility = .hidden
-        self.appearance = NSAppearance(named: .darkAqua)
-        self.minSize = NSSize(width: 320, height: 240)
-        self.isReleasedWhenClosed = false
+        backgroundColor = .black
+        titlebarAppearsTransparent = true
+        titleVisibility = .hidden
+        appearance = NSAppearance(named: .darkAqua)
+        minSize = NSSize(width: 320, height: 240)
+        isReleasedWhenClosed = false
 
         setupInfoBar()
         setupInfoPanel()
@@ -56,7 +58,7 @@ class ImageWindow: NSWindow {
     }
 
     func updateTitle(filename: String, index: Int, total: Int) {
-        self.title = "\(filename) [\(index + 1)/\(total)]"
+        title = "\(filename) [\(index + 1)/\(total)]"
     }
 
     func updateInfo(_ text: String) {
@@ -95,7 +97,7 @@ class ImageWindow: NSWindow {
 
             infoPanel.trailingAnchor.constraint(equalTo: cv.trailingAnchor, constant: -12),
             infoPanel.centerYAnchor.constraint(equalTo: cv.centerYAnchor),
-            infoPanel.widthAnchor.constraint(equalToConstant: 300),
+            infoPanel.widthAnchor.constraint(equalToConstant: 300)
         ])
     }
 

@@ -136,7 +136,8 @@ class InputHandler {
             filenameSearchBuffer.removeLast()
             if filenameSearchBuffer.isEmpty,
                let start = filenameSearchStartIndex,
-               start < renderer.imageList.count {
+               start < renderer.imageList.count
+            {
                 renderer.gridLayout.selectedIndex = start
                 renderer.gridLayout.scrollToSelection()
             } else {
@@ -190,7 +191,7 @@ class InputHandler {
 
         let anchor = filenameSearchStartIndex ?? renderer.gridLayout.selectedIndex
         let start = (anchor + 1) % paths.count
-        for offset in 0..<paths.count {
+        for offset in 0 ..< paths.count {
             let idx = (start + offset) % paths.count
             let name = (paths[idx] as NSString).lastPathComponent.lowercased()
             if name.hasPrefix(prefix) {
@@ -204,7 +205,7 @@ class InputHandler {
 
     private func isSearchEvent(_ event: NSEvent) -> Bool {
         let blocked: NSEvent.ModifierFlags = [.command, .control, .option, .function]
-        return event.modifierFlags.intersection(blocked).isEmpty
+        return event.modifierFlags.isDisjoint(with: blocked)
     }
 
     private func isSearchCharacter(_ c: Character) -> Bool {

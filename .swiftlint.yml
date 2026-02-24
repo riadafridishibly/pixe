@@ -1,0 +1,49 @@
+included:
+  - Sources
+
+excluded:
+  - .build
+  - .swiftpm
+  - Sources/Pixe/BuildInfo.swift
+
+disabled_rules:
+  - trailing_comma
+  - todo
+  - nesting
+  - cyclomatic_complexity
+  - function_body_length
+  - type_body_length
+  - file_length
+  - force_try
+  - implicitly_unwrapped_optional
+  - comma
+  - opening_brace
+
+opt_in_rules:
+  - empty_count
+  - closure_spacing
+  - contains_over_first_not_nil
+  - fatal_error_message
+  - first_where
+  - modifier_order
+  - overridden_super_call
+  - private_outlet
+  - redundant_nil_coalescing
+  - sorted_first_last
+  - yoda_condition
+
+line_length:
+  warning: 140
+  error: 200
+
+identifier_name:
+  min_length:
+    warning: 1
+  max_length:
+    warning: 60
+
+function_parameter_count:
+  warning: 8
+
+large_tuple:
+  warning: 4

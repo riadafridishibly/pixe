@@ -35,7 +35,9 @@ class Renderer: NSObject, MTKViewDelegate {
 
     // View mode
     var mode: ViewMode
-    var hasMultipleImages: Bool { imageList.count > 1 || imageList.isEnumerating || imageList.isSorting || imageList.hasDirectoryArguments }
+    var hasMultipleImages: Bool {
+        imageList.count > 1 || imageList.isEnumerating || imageList.isSorting || imageList.hasDirectoryArguments
+    }
 
     // Grid
     let gridLayout = GridLayout()
@@ -74,6 +76,7 @@ class Renderer: NSObject, MTKViewDelegate {
         let aspect: Float
         let quality: DisplayTextureQuality
     }
+
     private var prefetchCache: [String: PrefetchEntry] = [:]
     private var prefetchLoading: Set<String> = []  // paths currently being loaded (prevents double decode)
     private var currentLoadTask: DispatchWorkItem?
@@ -86,13 +89,13 @@ class Renderer: NSObject, MTKViewDelegate {
 
     init(device: MTLDevice, imageList: ImageList, initialMode: ViewMode, config: Config) {
         self.device = device
-        self.commandQueue = device.makeCommandQueue()!
+        commandQueue = device.makeCommandQueue()!
         self.imageList = imageList
         self.config = config
-        self.mode = initialMode
+        mode = initialMode
         // Conservative default matching 800×600 window at 2× scale.
         // The real drawable size arrives via mtkView(_:drawableSizeWillChange:).
-        self.viewportSize = SIMD2(1600, 1200)
+        viewportSize = SIMD2(1600, 1200)
         super.init()
         setupPipeline()
         setupVertexBuffer()
@@ -181,10 +184,10 @@ class Renderer: NSObject, MTKViewDelegate {
         let vertices: [Vertex] = [
             Vertex(position: SIMD2(-1,  1), texCoord: SIMD2(0, 0)),
             Vertex(position: SIMD2(-1, -1), texCoord: SIMD2(0, 1)),
-            Vertex(position: SIMD2( 1, -1), texCoord: SIMD2(1, 1)),
+            Vertex(position: SIMD2(1, -1), texCoord: SIMD2(1, 1)),
             Vertex(position: SIMD2(-1,  1), texCoord: SIMD2(0, 0)),
-            Vertex(position: SIMD2( 1, -1), texCoord: SIMD2(1, 1)),
-            Vertex(position: SIMD2( 1,  1), texCoord: SIMD2(1, 0)),
+            Vertex(position: SIMD2(1, -1), texCoord: SIMD2(1, 1)),
+            Vertex(position: SIMD2(1,  1), texCoord: SIMD2(1, 0))
         ]
         vertexBuffer = device.makeBuffer(
             bytes: vertices,
@@ -275,7 +278,7 @@ class Renderer: NSObject, MTKViewDelegate {
 
         let device = self.device
         let commandQueue = self.commandQueue
-        let maxPixelSize = self.maxDisplayPixelSize
+        let maxPixelSize = maxDisplayPixelSize
         let rawPreviewMinLongSide = max(1536, Int(Double(maxPixelSize) * 0.9))
 
         var task: DispatchWorkItem!
@@ -348,14 +351,17 @@ class Renderer: NSObject, MTKViewDelegate {
         for key in prefetchCache.keys where !keepPaths.contains(key) {
             if let entry = prefetchCache[key] {
                 let size = MemoryProfiler.textureBytes(entry.texture)
-                MemoryProfiler.logEvent("prefetch evict: \((key as NSString).lastPathComponent) [\(MemoryProfiler.formatBytes(size))]", device: device)
+                MemoryProfiler.logEvent(
+                    "prefetch evict: \((key as NSString).lastPathComponent) [\(MemoryProfiler.formatBytes(size))]",
+                    device: device
+                )
             }
             prefetchCache.removeValue(forKey: key)
         }
 
         let device = self.device
         let commandQueue = self.commandQueue
-        let maxPixelSize = self.prefetchDisplayPixelSize
+        let maxPixelSize = prefetchDisplayPixelSize
 
         for idx in adjacentIndices {
             let path = imageList.allPaths[idx]
@@ -482,7 +488,7 @@ class Renderer: NSObject, MTKViewDelegate {
             }
         }
 
-        var currentInfo: String? = nil
+        var currentInfo: String?
         if let tex = currentTexture {
             currentInfo = MemoryProfiler.textureSummary(tex)
         }
@@ -824,7 +830,7 @@ class Renderer: NSObject, MTKViewDelegate {
                 let newCapacity = max(needed, thumbnailUniformCapacity * 2, 64)
                 var newBuffers: [MTLBuffer] = []
                 newBuffers.reserveCapacity(thumbnailFramesInFlight)
-                for _ in 0..<thumbnailFramesInFlight {
+                for _ in 0 ..< thumbnailFramesInFlight {
                     guard let buffer = device.makeBuffer(length: uniformStride * newCapacity, options: .storageModeShared) else {
                         newBuffers.removeAll()
                         break

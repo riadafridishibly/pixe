@@ -1,6 +1,6 @@
+import Darwin
 import Foundation
 import UniformTypeIdentifiers
-import Darwin
 
 protocol DirectoryImageWalking {
     var name: String { get }
@@ -12,7 +12,7 @@ enum ImageDirectoryWalker {
     private static let strategies: [any DirectoryImageWalking] = [
         FDDirectoryWalker(),
         ReaddirDirectoryWalker(),
-        FoundationDirectoryWalker(),
+        FoundationDirectoryWalker()
     ]
 
     static func walk(
@@ -77,7 +77,7 @@ private struct FDDirectoryWalker: DirectoryImageWalking {
             "--print0",
             "--absolute-path",
             "--no-ignore",
-            "--color", "never",
+            "--color", "never"
         ]
         for ext in allowedExtensions.sorted() {
             arguments.append("--extension")
@@ -106,7 +106,10 @@ private struct FDDirectoryWalker: DirectoryImageWalking {
 
         func emitCurrentPathIfNeeded() {
             guard !partialPathBytes.isEmpty else { return }
-            let path = String(decoding: partialPathBytes, as: UTF8.self)
+            guard let path = String(bytes: partialPathBytes, encoding: .utf8) else {
+                partialPathBytes.removeAll(keepingCapacity: true)
+                return
+            }
             partialPathBytes.removeAll(keepingCapacity: true)
             guard !path.isEmpty, config.extensionFilter.accepts(path) else { return }
             batch.append(path)
@@ -167,7 +170,7 @@ private struct ReaddirDirectoryWalker: DirectoryImageWalking {
 
     private static let packageExtensions: Set<String> = [
         "app", "bundle", "framework", "plugin", "appex", "pkg",
-        "xcodeproj", "xcworkspace",
+        "xcodeproj", "xcworkspace"
     ]
 
     func walk(at rootPath: String, config: Config, emitBatch: @escaping ([String]) -> Void) -> Bool {
@@ -210,7 +213,8 @@ private struct ReaddirDirectoryWalker: DirectoryImageWalking {
 
                 case .file:
                     guard ExtensionMatcher.isLikelyImageFile(name: name, allowedExtensions: allowedExtensions),
-                          config.extensionFilter.accepts(fullPath) else {
+                          config.extensionFilter.accepts(fullPath)
+                    else {
                         continue
                     }
                     batch.append(fullPath)
@@ -299,7 +303,8 @@ private struct FoundationDirectoryWalker: DirectoryImageWalking {
                   let isFile = values.isRegularFile, isFile,
                   let contentType = values.contentType,
                   contentType.conforms(to: .image),
-                  config.extensionFilter.accepts(fileURL.path) else {
+                  config.extensionFilter.accepts(fileURL.path)
+            else {
                 continue
             }
 
@@ -322,12 +327,12 @@ private enum ExtensionMatcher {
     private static let defaultImageExtensions: Set<String> = [
         "jpg", "jpeg", "jpe", "png", "gif", "bmp",
         "tif", "tiff", "webp", "heic", "heif", "avif", "jp2",
-        "arw", "cr2", "cr3", "nef", "raf", "orf", "rw2", "dng", "pef", "srw", "x3f",
+        "arw", "cr2", "cr3", "nef", "raf", "orf", "rw2", "dng", "pef", "srw", "x3f"
     ]
 
     static func allowedExtensions(for filter: ExtensionFilter) -> Set<String> {
         switch filter {
-        case .include(let set):
+        case let .include(set):
             return set
         case .exclude:
             return Set(defaultImageExtensions.filter { filter.accepts("x.\($0)") })

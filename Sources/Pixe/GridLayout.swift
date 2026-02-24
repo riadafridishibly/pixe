@@ -1,5 +1,5 @@
-import simd
 import Foundation
+import simd
 
 class GridLayout {
     let defaultThumbnailSize: Float = 200.0
@@ -54,21 +54,21 @@ class GridLayout {
     // MARK: - Visible Range
 
     func visibleRange() -> Range<Int> {
-        guard totalItems > 0 else { return 0..<0 }
+        guard totalItems > 0 else { return 0 ..< 0 }
         let firstRow = max(0, Int(scrollOffset / cellSize))
         let lastRow = min(rows - 1, Int((scrollOffset + viewportHeight) / cellSize))
         let start = firstRow * columns
         let end = min(totalItems, (lastRow + 1) * columns)
-        return start..<end
+        return start ..< end
     }
 
     func prefetchRange(buffer: Int = 2) -> Range<Int> {
-        guard totalItems > 0 else { return 0..<0 }
+        guard totalItems > 0 else { return 0 ..< 0 }
         let firstRow = max(0, Int(scrollOffset / cellSize) - buffer)
         let lastRow = min(rows - 1, Int((scrollOffset + viewportHeight) / cellSize) + buffer)
         let start = firstRow * columns
         let end = min(totalItems, (lastRow + 1) * columns)
-        return start..<end
+        return start ..< end
     }
 
     // MARK: - Transforms

@@ -4,7 +4,6 @@ import Metal
 /// Lightweight memory profiler — press 'M' in image mode to dump stats.
 /// Also logs automatically on key events (image load, prefetch, thumbnail batch).
 enum MemoryProfiler {
-
     static var enabled = false
 
     // MARK: - Process Memory
@@ -48,8 +47,8 @@ enum MemoryProfiler {
         var w = texture.width
         var h = texture.height
         let bpp = bytesPerPixel(texture.pixelFormat)
-        for level in 0..<texture.mipmapLevelCount {
-            let _ = level
+        for level in 0 ..< texture.mipmapLevelCount {
+            _ = level
             total += w * h * bpp
             w = max(1, w / 2)
             h = max(1, h / 2)

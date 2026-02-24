@@ -30,9 +30,17 @@ class ImageList {
     var onBatchAdded: ((Int) -> Void)?
     var onEnumerationComplete: ((Int) -> Void)?
 
-    var count: Int { paths.count }
-    var isEmpty: Bool { paths.isEmpty }
-    var allPaths: [String] { paths }
+    var count: Int {
+        paths.count
+    }
+
+    var isEmpty: Bool {
+        paths.isEmpty
+    }
+
+    var allPaths: [String] {
+        paths
+    }
 
     var currentPath: String? {
         guard !paths.isEmpty else { return nil }
@@ -150,7 +158,10 @@ class ImageList {
         return true
     }
 
-    private func enumerateDirectoryAsync(at path: String, config: Config) -> (strategy: String, fileCount: Int, discoveredPaths: [String])? {
+    private func enumerateDirectoryAsync(
+        at path: String,
+        config: Config
+    ) -> (strategy: String, fileCount: Int, discoveredPaths: [String])? {
         let pendingMainBatches = DispatchGroup()
         let walkStart = DispatchTime.now()
         var foundCount = 0
@@ -363,7 +374,7 @@ class ImageList {
         switch value {
         case .missing:
             return nil
-        case .date(let date):
+        case let .date(date):
             return date
         }
     }
@@ -379,7 +390,8 @@ class ImageList {
                path: path,
                mtime: signature.mtime,
                fileSize: signature.fileSize
-           ) {
+           )
+        {
             exifDateCache[path] = persisted
             return persisted
         }
@@ -401,7 +413,8 @@ class ImageList {
     private func fileSignature(for path: String) -> FileSignature? {
         guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
               let modDate = attrs[.modificationDate] as? Date,
-              let rawSize = attrs[.size] as? NSNumber else {
+              let rawSize = attrs[.size] as? NSNumber
+        else {
             return nil
         }
         return FileSignature(
@@ -413,7 +426,8 @@ class ImageList {
     private static func readExifCaptureDate(for path: String) -> Date? {
         let url = URL(fileURLWithPath: path)
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
-              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] else {
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+        else {
             return nil
         }
 

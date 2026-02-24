@@ -2,7 +2,7 @@ PREFIX ?= /usr/local
 COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_INFO := Sources/Pixe/BuildInfo.swift
 
-.PHONY: build install uninstall clean
+.PHONY: build install uninstall clean lint format format-check
 
 build:
 	@echo 'enum BuildInfo { static let version = "0.1.0"; static let commit = "$(COMMIT)" }' > $(BUILD_INFO)
@@ -18,3 +18,12 @@ uninstall:
 
 clean:
 	swift package clean
+
+lint:
+	swiftlint lint Sources
+
+format:
+	swiftformat Sources
+
+format-check:
+	swiftformat --lint Sources

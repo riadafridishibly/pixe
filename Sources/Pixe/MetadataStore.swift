@@ -39,7 +39,7 @@ final class MetadataStore {
             return nil
         }
 
-        self.db = opened
+        db = opened
 
         sqlite3_busy_timeout(opened, 3000)
         _ = exec("PRAGMA journal_mode=WAL;")
@@ -176,7 +176,8 @@ final class MetadataStore {
 
             guard checked,
                   abs(cachedMtime - mtime) < 0.000_001,
-                  cachedSize == fileSize else {
+                  cachedSize == fileSize
+            else {
                 return nil
             }
 
@@ -278,7 +279,8 @@ final class MetadataStore {
 
             var deleteStmt: OpaquePointer?
             if sqlite3_prepare_v2(db, "DELETE FROM directory_entries WHERE dir_path = ?1;", -1, &deleteStmt, nil) == SQLITE_OK,
-               let deleteStmt {
+               let deleteStmt
+            {
                 sqlite3_bind_text(deleteStmt, 1, dirPath, -1, sqliteTransient)
                 _ = sqlite3_step(deleteStmt)
                 sqlite3_finalize(deleteStmt)
@@ -290,7 +292,8 @@ final class MetadataStore {
             """
             var insertStmt: OpaquePointer?
             if sqlite3_prepare_v2(db, insertSQL, -1, &insertStmt, nil) == SQLITE_OK,
-               let insertStmt {
+               let insertStmt
+            {
                 let now = Date().timeIntervalSince1970
                 for path in paths {
                     sqlite3_reset(insertStmt)
@@ -321,32 +324,32 @@ final class MetadataStore {
             );
             """
         ) &&
-        exec("CREATE INDEX IF NOT EXISTS idx_thumb_source_path ON thumb_meta(source_path);") &&
-        exec(
-            """
-            CREATE TABLE IF NOT EXISTS image_meta (
-                path TEXT PRIMARY KEY,
-                mtime REAL NOT NULL,
-                file_size INTEGER NOT NULL,
-                exif_capture_ts REAL,
-                exif_checked INTEGER NOT NULL DEFAULT 0,
-                updated_at REAL NOT NULL
-            );
-            """
-        ) &&
-        exec(
-            """
-            CREATE TABLE IF NOT EXISTS directory_entries (
-                dir_path TEXT NOT NULL,
-                path TEXT NOT NULL,
-                updated_at REAL NOT NULL,
-                PRIMARY KEY(dir_path, path)
-            );
-            """
-        ) &&
-        exec("CREATE INDEX IF NOT EXISTS idx_directory_entries_path ON directory_entries(path);") &&
-        exec("CREATE INDEX IF NOT EXISTS idx_directory_entries_dir ON directory_entries(dir_path);") &&
-        exec("CREATE INDEX IF NOT EXISTS idx_image_exif_capture ON image_meta(exif_capture_ts);")
+            exec("CREATE INDEX IF NOT EXISTS idx_thumb_source_path ON thumb_meta(source_path);") &&
+            exec(
+                """
+                CREATE TABLE IF NOT EXISTS image_meta (
+                    path TEXT PRIMARY KEY,
+                    mtime REAL NOT NULL,
+                    file_size INTEGER NOT NULL,
+                    exif_capture_ts REAL,
+                    exif_checked INTEGER NOT NULL DEFAULT 0,
+                    updated_at REAL NOT NULL
+                );
+                """
+            ) &&
+            exec(
+                """
+                CREATE TABLE IF NOT EXISTS directory_entries (
+                    dir_path TEXT NOT NULL,
+                    path TEXT NOT NULL,
+                    updated_at REAL NOT NULL,
+                    PRIMARY KEY(dir_path, path)
+                );
+                """
+            ) &&
+            exec("CREATE INDEX IF NOT EXISTS idx_directory_entries_path ON directory_entries(path);") &&
+            exec("CREATE INDEX IF NOT EXISTS idx_directory_entries_dir ON directory_entries(dir_path);") &&
+            exec("CREATE INDEX IF NOT EXISTS idx_image_exif_capture ON image_meta(exif_capture_ts);")
     }
 
     private func exec(_ sql: String) -> Bool {

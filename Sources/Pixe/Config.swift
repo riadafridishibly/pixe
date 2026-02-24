@@ -10,8 +10,8 @@ enum ExtensionFilter {
         let ext = (path as NSString).pathExtension.lowercased()
         guard !ext.isEmpty else { return false }
         switch self {
-        case .exclude(let set): return !set.contains(ext)
-        case .include(let set): return set.contains(ext)
+        case let .exclude(set): return !set.contains(ext)
+        case let .include(set): return set.contains(ext)
         }
     }
 }
@@ -60,8 +60,8 @@ struct Config {
         var walkStrategy: DirectoryWalkStrategy = .auto
         var sortMode: SortMode = .name
         var imageArguments: [String] = []
-        var includeExts: Set<String>? = nil
-        var excludeExts: Set<String>? = nil
+        var includeExts: Set<String>?
+        var excludeExts: Set<String>?
 
         var i = 0
         while i < args.count {
@@ -134,11 +134,13 @@ struct Config {
             case let a where a.hasPrefix("--include="):
                 includeExts = parseExtensions(String(a.dropFirst("--include=".count)))
             case "--include":
-                i += 1; if i < args.count { includeExts = parseExtensions(args[i]) }
+                i += 1
+                if i < args.count { includeExts = parseExtensions(args[i]) }
             case let a where a.hasPrefix("--exclude="):
                 excludeExts = parseExtensions(String(a.dropFirst("--exclude=".count)))
             case "--exclude":
-                i += 1; if i < args.count { excludeExts = parseExtensions(args[i]) }
+                i += 1
+                if i < args.count { excludeExts = parseExtensions(args[i]) }
             case "--version", "-v":
                 printVersion()
                 exit(0)

@@ -1,10 +1,9 @@
-import Metal
-import ImageIO
 import CoreGraphics
+import ImageIO
+import Metal
 import UniformTypeIdentifiers
 
 enum ImageLoader {
-
     // MARK: - Display-Resolution Image Loading
 
     /// Load an image at display resolution. RAW files use embedded preview;
@@ -47,13 +46,16 @@ enum ImageLoader {
             let options: [CFString: Any] = [
                 kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
                 kCGImageSourceCreateThumbnailFromImageAlways: true,
-                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceCreateThumbnailWithTransform: true
             ]
             guard let image = CGImageSourceCreateThumbnailAtIndex(imageSource, 0, options as CFDictionary) else {
                 return nil
             }
 
-            MemoryProfiler.logEvent("loadDisplayTexture: decoded \(image.width)×\(image.height) from \((path as NSString).lastPathComponent)", device: device)
+            MemoryProfiler.logEvent(
+                "loadDisplayTexture: decoded \(image.width)×\(image.height) from \((path as NSString).lastPathComponent)",
+                device: device
+            )
             let texture = createSharedTexture(from: image, device: device)
             if let tex = texture {
                 MemoryProfiler.logTextureCreated("loadDisplayTexture", texture: tex, device: device)
@@ -92,7 +94,7 @@ enum ImageLoader {
             let options: [CFString: Any] = [
                 kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
                 kCGImageSourceCreateThumbnailFromImageAlways: true,
-                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceCreateThumbnailWithTransform: true
             ]
             guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
                 return nil
@@ -115,10 +117,11 @@ enum ImageLoader {
         // Do NOT set CreateThumbnailFromImageAlways — that forces full RAW decode
         let options: [CFString: Any] = [
             kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
-            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceCreateThumbnailWithTransform: true
         ]
         guard let preview = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary),
-              preview.width >= 16, preview.height >= 16 else {
+              preview.width >= 16, preview.height >= 16
+        else {
             CGImageSourceRemoveCacheAtIndex(source, 0)
             return nil
         }
@@ -152,7 +155,8 @@ enum ImageLoader {
             bytesPerRow: bytesPerRow,
             space: colorSpace,
             bitmapInfo: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
-        ) else {
+        )
+        else {
             return nil
         }
 
@@ -198,7 +202,8 @@ enum ImageLoader {
         _ data: Data, device: MTLDevice
     ) -> (texture: MTLTexture, width: Int, height: Int)? {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil),
-              let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+              let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil)
+        else {
             return nil
         }
 
@@ -220,7 +225,8 @@ enum ImageLoader {
             bytesPerRow: bytesPerRow,
             space: colorSpace,
             bitmapInfo: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
-        ) else {
+        )
+        else {
             return nil
         }
 
@@ -274,7 +280,8 @@ enum ImageLoader {
             bytesPerRow: bytesPerRow,
             space: colorSpace,
             bitmapInfo: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
-        ) else {
+        )
+        else {
             return nil
         }
 
@@ -324,7 +331,7 @@ enum ImageLoader {
             // which would force a full RAW decode
             let options: [CFString: Any] = [
                 kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
-                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceCreateThumbnailWithTransform: true
             ]
             guard let preview = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
                 return nil
@@ -334,7 +341,10 @@ enum ImageLoader {
                 CGImageSourceRemoveCacheAtIndex(source, 0)
                 return nil
             }
-            MemoryProfiler.logEvent("loadPreview: \(preview.width)×\(preview.height) from \((path as NSString).lastPathComponent)", device: device)
+            MemoryProfiler.logEvent(
+                "loadPreview: \(preview.width)×\(preview.height) from \((path as NSString).lastPathComponent)",
+                device: device
+            )
             let texture = createSharedTexture(from: preview, device: device)
             if let tex = texture {
                 MemoryProfiler.logTextureCreated("RAW preview", texture: tex, device: device)
@@ -356,7 +366,8 @@ enum ImageLoader {
 
         // File size
         if let attrs = try? FileManager.default.attributesOfItem(atPath: path),
-           let size = attrs[.size] as? UInt64 {
+           let size = attrs[.size] as? UInt64
+        {
             result.append(("Size", formatFileSize(size)))
         }
 
@@ -369,7 +380,8 @@ enum ImageLoader {
 
         // Pixel dimensions
         if let w = properties[kCGImagePropertyPixelWidth] as? Int,
-           let h = properties[kCGImagePropertyPixelHeight] as? Int {
+           let h = properties[kCGImagePropertyPixelHeight] as? Int
+        {
             result.append(("Dimensions", "\(w) \u{00D7} \(h)"))
         }
 
@@ -439,7 +451,8 @@ enum ImageLoader {
         }
 
         if let isoArray = exif[kCGImagePropertyExifISOSpeedRatings] as? [Int],
-           let iso = isoArray.first {
+           let iso = isoArray.first
+        {
             result.append(("ISO", "\(iso)"))
         }
 
@@ -465,7 +478,8 @@ enum ImageLoader {
     static func isImageFile(_ path: String) -> Bool {
         let url = URL(fileURLWithPath: path)
         guard let resourceValues = try? url.resourceValues(forKeys: [.contentTypeKey]),
-              let contentType = resourceValues.contentType else {
+              let contentType = resourceValues.contentType
+        else {
             return false
         }
         return contentType.conforms(to: .image)

@@ -6,16 +6,17 @@ class MetalImageView: MTKView {
     override init(frame frameRect: CGRect, device: MTLDevice?) {
         super.init(frame: frameRect, device: device)
 
-        self.isPaused = true
-        self.enableSetNeedsDisplay = true
-        self.colorPixelFormat = .bgra8Unorm
-        self.clearColor = MTLClearColor(red: 0.08, green: 0.08, blue: 0.08, alpha: 1.0)
-        self.layer?.isOpaque = true
-        (self.layer as? CAMetalLayer)?.colorspace = CGColorSpace(name: CGColorSpace.sRGB)
+        isPaused = true
+        enableSetNeedsDisplay = true
+        colorPixelFormat = .bgra8Unorm
+        clearColor = MTLClearColor(red: 0.08, green: 0.08, blue: 0.08, alpha: 1.0)
+        layer?.isOpaque = true
+        (layer as? CAMetalLayer)?.colorspace = CGColorSpace(name: CGColorSpace.sRGB)
 
         setupGestureRecognizers()
     }
 
+    @available(*, unavailable)
     required init(coder: NSCoder) {
         fatalError("not implemented")
     }
@@ -35,7 +36,9 @@ class MetalImageView: MTKView {
 
     // MARK: - Key Events
 
-    override var acceptsFirstResponder: Bool { true }
+    override var acceptsFirstResponder: Bool {
+        true
+    }
 
     override func keyDown(with event: NSEvent) {
         inputHandler?.handleKeyDown(event: event, view: self)

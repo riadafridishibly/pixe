@@ -1,6 +1,6 @@
-import Metal
-import Foundation
 import CommonCrypto
+import Foundation
+import Metal
 
 // MARK: - O(1) LRU via doubly-linked list
 
@@ -8,7 +8,9 @@ private class LRUNode {
     let key: Int
     var prev: LRUNode?
     var next: LRUNode?
-    init(key: Int) { self.key = key }
+    init(key: Int) {
+        self.key = key
+    }
 }
 
 private class LRUList {
@@ -16,7 +18,9 @@ private class LRUList {
     private var tail: LRUNode?  // newest
     private var map: [Int: LRUNode] = [:]
 
-    var count: Int { map.count }
+    var count: Int {
+        map.count
+    }
 
     func touch(_ key: Int) {
         if let node = map[key] {
@@ -79,7 +83,7 @@ class ThumbnailCache {
     private var loading: Set<Int> = []
     private let lru = LRUList()
     private var dynamicMaxCached: Int
-    private var pinnedVisibleRange: Range<Int> = 0..<0
+    private var pinnedVisibleRange: Range<Int> = 0 ..< 0
 
     // Disk cache
     private let diskCacheEnabled: Bool
@@ -90,7 +94,7 @@ class ThumbnailCache {
     private let loadQueue = DispatchQueue(label: "pixe.thumbnail", qos: .utility, attributes: .concurrent)
     private let loadSemaphore = DispatchSemaphore(value: 8)
     private var currentGeneration: Int = 0
-    private var currentPrefetchRange: Range<Int> = 0..<0
+    private var currentPrefetchRange: Range<Int> = 0 ..< 0
     private var currentListVersion: Int = 0
     private let stateLock = NSLock()
 
@@ -99,11 +103,11 @@ class ThumbnailCache {
 
     init(device: MTLDevice, config: Config) {
         self.device = device
-        self.maxPixelSize = config.thumbSize
-        self.dynamicMaxCached = baseMaxCached
-        self.diskCacheEnabled = config.diskCacheEnabled
-        self.thumbDir = config.thumbDir
-        self.metadataStore = config.diskCacheEnabled ? MetadataStore(directory: config.thumbDir) : nil
+        maxPixelSize = config.thumbSize
+        dynamicMaxCached = baseMaxCached
+        diskCacheEnabled = config.diskCacheEnabled
+        thumbDir = config.thumbDir
+        metadataStore = config.diskCacheEnabled ? MetadataStore(directory: config.thumbDir) : nil
 
         if diskCacheEnabled {
             ensureDirectory(thumbDir)
@@ -153,7 +157,7 @@ class ThumbnailCache {
 
         let device = self.device
         let maxPixelSize = self.maxPixelSize
-        let diskEnabled = self.diskCacheEnabled
+        let diskEnabled = diskCacheEnabled
 
         for (index, path) in toLoad {
             loadQueue.async { [weak self] in
@@ -201,7 +205,8 @@ class ThumbnailCache {
                         if let diskPath = self?.diskPath(for: key),
                            let data = try? Data(contentsOf: URL(fileURLWithPath: diskPath)),
                            let result = ImageLoader.textureFromJPEGData(data, device: device),
-                           result.width == entry.width, result.height == entry.height {
+                           result.width == entry.width, result.height == entry.height
+                        {
                             texture = result.texture
                             aspect = entry.aspect
                             let diskMs = Double(DispatchTime.now().uptimeNanoseconds - diskStart.uptimeNanoseconds) / 1_000_000
@@ -286,10 +291,10 @@ class ThumbnailCache {
         lru.removeAll()
         loading.removeAll()
         dynamicMaxCached = baseMaxCached
-        pinnedVisibleRange = 0..<0
+        pinnedVisibleRange = 0 ..< 0
         stateLock.lock()
         currentGeneration += 1
-        currentPrefetchRange = 0..<0
+        currentPrefetchRange = 0 ..< 0
         currentListVersion += 1
         stateLock.unlock()
     }
@@ -340,7 +345,8 @@ class ThumbnailCache {
 
     private static func fileModTime(_ path: String) -> Double {
         guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
-              let date = attrs[.modificationDate] as? Date else {
+              let date = attrs[.modificationDate] as? Date
+        else {
             return 0
         }
         return date.timeIntervalSince1970
@@ -404,7 +410,7 @@ class ThumbnailCache {
     }
 
     func flushManifest() {
-        diskQueue.sync { }
+        diskQueue.sync {}
         metadataStore?.flush()
     }
 }
