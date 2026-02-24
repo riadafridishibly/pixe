@@ -158,8 +158,8 @@ class ThumbnailCache {
         let diskEnabled = self.diskCacheEnabled
         let manifestSnapshot = diskEnabled ? self.manifest : [:]
 
-        loadQueue.async { [weak self] in
-            for (index, path) in toLoad {
+        for (index, path) in toLoad {
+            loadQueue.async { [weak self] in
                 // Pre-semaphore stale check: skip if user scrolled past
                 if let self = self {
                     self.stateLock.lock()
@@ -167,11 +167,12 @@ class ThumbnailCache {
                     self.stateLock.unlock()
                     if isStale {
                         DispatchQueue.main.async { self.loading.remove(index) }
-                        continue
+                        return
                     }
                 }
 
                 self?.loadSemaphore.wait()
+                let thumbStart = DispatchTime.now()
 
                 // Post-semaphore stale check: may have become stale while waiting
                 if let self = self {
@@ -181,7 +182,7 @@ class ThumbnailCache {
                     if isStale {
                         self.loadSemaphore.signal()
                         DispatchQueue.main.async { self.loading.remove(index) }
-                        continue
+                        return
                     }
                 }
 
@@ -190,22 +191,27 @@ class ThumbnailCache {
                 var aspect: Float = 1.0
                 var cacheData: Data?
                 var manifestEntry: ManifestEntry?
+                var perfDetail = ""
 
                 // Try disk cache first
                 if diskEnabled, let key = cacheKey {
                     if let entry = manifestSnapshot[key] {
+                        let diskStart = DispatchTime.now()
                         if let diskPath = self?.diskPath(for: key),
                            let data = try? Data(contentsOf: URL(fileURLWithPath: diskPath)),
                            let result = ImageLoader.textureFromJPEGData(data, device: device),
                            result.width == entry.width, result.height == entry.height {
                             texture = result.texture
                             aspect = entry.aspect
+                            let diskMs = Double(DispatchTime.now().uptimeNanoseconds - diskStart.uptimeNanoseconds) / 1_000_000
+                            perfDetail = String(format: "disk+decode %.1fms", diskMs)
                         }
                     }
                 }
 
                 // Generate fresh thumbnail if no cache hit
                 if texture == nil {
+                    let genStart = DispatchTime.now()
                     if let result = ImageLoader.generateThumbnail(
                         path: path, device: device, maxPixelSize: maxPixelSize
                     ) {
@@ -214,10 +220,16 @@ class ThumbnailCache {
                         cacheData = result.cacheData
                         let mtime = Self.fileModTime(path)
                         manifestEntry = ManifestEntry(width: result.width, height: result.height, aspect: result.aspect, mtime: mtime)
+                        let genMs = Double(DispatchTime.now().uptimeNanoseconds - genStart.uptimeNanoseconds) / 1_000_000
+                        perfDetail = String(format: "generate %.1fms", genMs)
                     }
                 }
 
                 self?.loadSemaphore.signal()
+
+                let totalMs = Double(DispatchTime.now().uptimeNanoseconds - thumbStart.uptimeNanoseconds) / 1_000_000
+                let source = cacheData != nil ? "gen" : "hit"
+                MemoryProfiler.logPerf(String(format: "thumb %d %@ %.1fms (%@)", index, source, totalMs, perfDetail))
 
                 // Deliver this thumbnail immediately to main thread
                 if let texture = texture {
