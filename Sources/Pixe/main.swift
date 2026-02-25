@@ -3,6 +3,20 @@ import AppKit
 let config = Config.parse()
 MemoryProfiler.enabled = config.debugMemory
 
+if !config.quiet {
+    if config.configFileLoaded {
+        fputs("pixe: config \(Config.configFilePath)\n", stderr)
+        for flag in config.configFileFlags {
+            fputs("pixe:   \(flag)\n", stderr)
+        }
+    } else {
+        fputs("pixe: config none\n", stderr)
+    }
+    if !config.cliFlags.isEmpty {
+        fputs("pixe: flags \(config.cliFlags.joined(separator: " "))\n", stderr)
+    }
+}
+
 if config.cleanThumbs {
     Config.cleanThumbsDirectory(config.thumbDir)
     exit(0)
