@@ -79,13 +79,31 @@ pixe [options] <image|directory> ...
 | `--chrono` | Shortcut for `--sort chrono` |
 | `--reverse-chrono` | Shortcut for `--sort reverse-chrono` |
 | `--include <exts>` | Only show these extensions (e.g. `jpg,png`) |
-| `--exclude <exts>` | Hide these extensions (mutually exclusive with `--include`) |
+| `--exclude <exts>` | Hide these extensions (last one wins if both `--include` and `--exclude` are set) |
+| `--exclude-dir <dirs>` | Skip directories by name or path (e.g. `node_modules,~/Photos/Trash`) |
+| `--quiet` | Suppress startup config message |
 | `--clean-thumbs` | Delete thumbnail cache and exit |
 | `--debug-mem` | Enable memory profiler event logging to stderr |
 | `-v, --version` | Show version |
 | `-h, --help` | Show help |
 
 SVG and PDF files are excluded by default.
+
+### Config file
+
+Pixe reads defaults from `~/.config/pixe/config`. Each non-empty, non-comment line is a flag:
+
+```
+# Skip common build/dependency directories
+--exclude-dir=node_modules
+--exclude-dir=build
+--exclude-dir="~/Library/Application Support/"
+
+--sort=chrono
+--thumb-size=512
+```
+
+CLI arguments override config file values for single-value flags (`--sort`, `--walker`, etc.) and combine with config for accumulating flags (`--exclude-dir`). Use `--quiet` to suppress the startup message that shows which config is active.
 
 ### Examples
 
@@ -98,6 +116,7 @@ pixe --chrono ~/Pictures       # Oldest to newest by EXIF capture date
 pixe --reverse-chrono ~/Pictures # Newest to oldest by EXIF capture date
 pixe --min-width 1920 ~/Photos  # Only images at least 1920px wide
 pixe --max-height 1080 ~/Photos # Only images at most 1080px tall
+pixe --exclude-dir=node_modules ~/project # Skip node_modules directories
 pixe --no-cache ~/project      # Skip disk cache
 ```
 
