@@ -230,15 +230,35 @@ struct Config {
             case "--reverse-chrono":
                 sortMode = .reverseChrono
             case let a where a.hasPrefix("--include="):
+                if excludeExts != nil {
+                    fputs("pixe: --include overrides previous --exclude\n", stderr)
+                    excludeExts = nil
+                }
                 includeExts = parseExtensions(String(a.dropFirst("--include=".count)))
             case "--include":
                 i += 1
-                if i < allArgs.count { includeExts = parseExtensions(allArgs[i]) }
+                if i < allArgs.count {
+                    if excludeExts != nil {
+                        fputs("pixe: --include overrides previous --exclude\n", stderr)
+                        excludeExts = nil
+                    }
+                    includeExts = parseExtensions(allArgs[i])
+                }
             case let a where a.hasPrefix("--exclude="):
+                if includeExts != nil {
+                    fputs("pixe: --exclude overrides previous --include\n", stderr)
+                    includeExts = nil
+                }
                 excludeExts = parseExtensions(String(a.dropFirst("--exclude=".count)))
             case "--exclude":
                 i += 1
-                if i < allArgs.count { excludeExts = parseExtensions(allArgs[i]) }
+                if i < allArgs.count {
+                    if includeExts != nil {
+                        fputs("pixe: --exclude overrides previous --include\n", stderr)
+                        includeExts = nil
+                    }
+                    excludeExts = parseExtensions(allArgs[i])
+                }
             case let a where a.hasPrefix("--exclude-dir="):
                 let value = String(a.dropFirst("--exclude-dir=".count))
                 parseDirExclusions(value, names: &excludedDirNames, paths: &excludedDirPaths)
@@ -259,10 +279,6 @@ struct Config {
             i += 1
         }
 
-        if includeExts != nil && excludeExts != nil {
-            fputs("pixe: --include and --exclude are mutually exclusive\n", stderr)
-            exit(1)
-        }
         let extensionFilter: ExtensionFilter
         if let incl = includeExts {
             extensionFilter = .include(incl)
