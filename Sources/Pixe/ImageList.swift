@@ -177,10 +177,20 @@ class ImageList {
             guard !batch.isEmpty else { return }
             foundCount += batch.count
             discoveredPaths.append(contentsOf: batch)
+
+            // Filter by min-size on background thread (not main)
+            let sizeFiltered: [String]
+            if let self = self, self.minSize > 0 {
+                sizeFiltered = batch.filter { self.meetsMinSize($0) }
+            } else {
+                sizeFiltered = batch
+            }
+            guard !sizeFiltered.isEmpty else { return }
+
             pendingMainBatches.enter()
             DispatchQueue.main.async { [weak self] in
                 defer { pendingMainBatches.leave() }
-                self?.flushBatch(batch)
+                self?.flushBatch(sizeFiltered)
             }
         }) else {
             if config.walkStrategy == .auto {
@@ -206,7 +216,7 @@ class ImageList {
     }
 
     private func flushBatch(_ batch: [String]) {
-        let filtered = batch.filter { !deletedPaths.contains($0) && knownPaths.insert($0).inserted && meetsMinSize($0) }
+        let filtered = batch.filter { !deletedPaths.contains($0) && knownPaths.insert($0).inserted }
         guard !filtered.isEmpty else { return }
 
         if deferLiveBatchesUntilFinalSort {
