@@ -256,12 +256,26 @@ private class WarmCacheProgress {
         let filename = (path as NSString).lastPathComponent
 
         if isTTY {
-            // Overwrite the current line
-            let line = String(
-                format: "\r\u{1B}[Kpixe: warm-cache: %d/%d (%d/s) %@",
-                s.processed, total, rate, filename
+            // Overwrite the current line, truncating to terminal width
+            let prefix = String(
+                format: "pixe: warm-cache: %d/%d (%d/s) ",
+                s.processed, total, rate
             )
-            fputs(line, stderr)
+            var cols = 80
+            var ws = winsize()
+            if ioctl(STDERR_FILENO, TIOCGWINSZ, &ws) == 0, ws.ws_col > 0 {
+                cols = Int(ws.ws_col)
+            }
+            let maxName = cols - prefix.count
+            let truncatedName: String
+            if maxName >= filename.count {
+                truncatedName = filename
+            } else if maxName > 1 {
+                truncatedName = "\u{2026}" + filename.suffix(maxName - 1)
+            } else {
+                truncatedName = ""
+            }
+            fputs("\r\u{1B}[K\(prefix)\(truncatedName)", stderr)
         } else {
             // Non-TTY: print a line every 100 files or on the last file
             if s.processed == total || s.processed % 100 == 0 {
