@@ -80,6 +80,7 @@ class Renderer: NSObject, MTKViewDelegate {
     private var prefetchCache: [String: PrefetchEntry] = [:]
     private var prefetchLoading: Set<String> = []  // paths currently being loaded (prevents double decode)
     private var currentLoadTask: DispatchWorkItem?
+    private var currentLoadPath: String?
     private var loadGeneration: Int = 0  // increments on each navigation, stale tasks bail out
     private var prefetchGeneration: Int = 0  // increments whenever adjacency set changes
     private var thumbnailSearchQuery: String?
@@ -238,6 +239,12 @@ class Renderer: NSObject, MTKViewDelegate {
     func loadCurrentImage() {
         guard let path = imageList.currentPath else { return }
         currentLoadTask?.cancel()
+        // Immediately clean up prefetchLoading for the cancelled task's path
+        // so stale entries don't cause the next load to early-return.
+        if let oldPath = currentLoadPath {
+            prefetchLoading.remove(oldPath)
+        }
+        currentLoadPath = path
         loadGeneration += 1
         let generation = loadGeneration
 
@@ -422,17 +429,13 @@ class Renderer: NSObject, MTKViewDelegate {
                 DispatchQueue.main.async {
                     self.prefetchLoading.remove(path)
                     guard self.mode == .image else { return }
-
-                    let isCurrent = self.imageList.currentPath == path
-                    let isRelevant = self.prefetchGeneration == generation
-                        && self.currentAndAdjacentPaths().contains(path)
-
-                    guard isCurrent || isRelevant else { return }
-
+                    guard self.prefetchGeneration == generation else { return }
+                    guard self.currentAndAdjacentPaths().contains(path) else { return }
                     self.prefetchCache[path] = PrefetchEntry(texture: tex, aspect: aspect, quality: .prefetch)
 
-                    // Promote to current texture if this is the image the user is viewing.
-                    guard isCurrent else { return }
+                    // If user navigated to this image while prefetch was in-flight,
+                    // promote the prefetched texture immediately.
+                    guard self.imageList.currentPath == path else { return }
                     self.currentTexture = tex
                     self.imageAspect = aspect
                     self.resetView()
