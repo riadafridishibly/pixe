@@ -10,6 +10,7 @@ class ImageList {
     private var paths: [String] = []
     private(set) var currentIndex: Int = 0
     private let sortMode: SortMode
+    private let minSize: Int
     private let sortQueue = DispatchQueue(label: "pixe.sort", qos: .userInitiated)
     private var sortGeneration: Int = 0
 
@@ -49,6 +50,7 @@ class ImageList {
 
     init(arguments: [String], config: Config) {
         sortMode = config.sortMode
+        minSize = config.minSize
         metadataStore = config.diskCacheEnabled ? MetadataStore(directory: config.thumbDir) : nil
         let fileManager = FileManager.default
 
@@ -69,15 +71,19 @@ class ImageList {
             if isDirectory.boolValue {
                 hasDirectoryArguments = true
                 directoryArgs.append((path: path, config: config))
-                if let cached = metadataStore?.cachedDirectoryEntries(dirPath: path, filter: config.extensionFilter) {
-                    for cachedPath in cached where !deletedPaths.contains(cachedPath) {
+                if let cached = metadataStore?.cachedDirectoryEntries(
+                    dirPath: path,
+                    filter: config.extensionFilter,
+                    minSize: config.minSize
+                ) {
+                    for cachedPath in cached where !deletedPaths.contains(cachedPath) && meetsMinSize(cachedPath) {
                         if knownPaths.insert(cachedPath).inserted {
                             paths.append(cachedPath)
                         }
                     }
                 }
             } else {
-                if ImageLoader.isImageFile(path) && config.extensionFilter.accepts(path) {
+                if ImageLoader.isImageFile(path) && config.extensionFilter.accepts(path) && meetsMinSize(path) {
                     if knownPaths.insert(path).inserted {
                         paths.append(path)
                         explicitFilePaths.insert(path)
@@ -200,7 +206,7 @@ class ImageList {
     }
 
     private func flushBatch(_ batch: [String]) {
-        let filtered = batch.filter { !deletedPaths.contains($0) && knownPaths.insert($0).inserted }
+        let filtered = batch.filter { !deletedPaths.contains($0) && knownPaths.insert($0).inserted && meetsMinSize($0) }
         guard !filtered.isEmpty else { return }
 
         if deferLiveBatchesUntilFinalSort {
@@ -478,6 +484,18 @@ class ImageList {
             makeFormatter("yyyy-MM-dd'T'HH:mm:ssXXXXX")
         ]
     }()
+
+    private func meetsMinSize(_ path: String) -> Bool {
+        guard minSize > 0 else { return true }
+        // Fast path: check cached dimensions from SQLite
+        if let cached = metadataStore?.cachedLongestSide(path: path) {
+            return cached >= minSize
+        }
+        // Slow path: read from file headers, then persist for next time
+        guard let dims = ImageLoader.imageDimensions(path: path) else { return true }
+        metadataStore?.upsertDimensions(path: path, width: dims.width, height: dims.height)
+        return max(dims.width, dims.height) >= minSize
+    }
 
     private func elapsedMs(since start: DispatchTime) -> Double {
         Double(DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds) / 1_000_000

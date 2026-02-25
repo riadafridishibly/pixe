@@ -473,6 +473,28 @@ enum ImageLoader {
         }
     }
 
+    // MARK: - Dimension Query
+
+    /// Read pixel dimensions from image file headers.
+    /// Uses CGImageSource properties — no pixel decoding, very fast (~1ms).
+    static func imageDimensions(path: String) -> (width: Int, height: Int)? {
+        let url = URL(fileURLWithPath: path)
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let w = properties[kCGImagePropertyPixelWidth] as? Int,
+              let h = properties[kCGImagePropertyPixelHeight] as? Int
+        else {
+            return nil
+        }
+        return (width: w, height: h)
+    }
+
+    /// Read the longest side (max of width, height) from image file headers.
+    static func imageLongestSide(path: String) -> Int? {
+        guard let dims = imageDimensions(path: path) else { return nil }
+        return max(dims.width, dims.height)
+    }
+
     // MARK: - Utility
 
     static func isImageFile(_ path: String) -> Bool {

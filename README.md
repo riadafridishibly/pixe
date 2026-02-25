@@ -68,6 +68,7 @@ pixe [options] <image|directory> ...
 |---|---|
 | `--thumb-dir <path>` | Thumbnail cache directory (default: `~/.cache/pixe/thumbs`) |
 | `--thumb-size <int>` | Max thumbnail size in pixels (default: 256) |
+| `--min-size <pixels>` | Skip images smaller than `<pixels>` on longest side |
 | `--no-cache` | Disable disk thumbnail cache |
 | `--walker <strategy>` | Traversal strategy: `auto`, `fd`, `readdir`, `foundation` |
 | `--sort <mode>` | Sort mode: `name`, `chrono`, `reverse-chrono` |

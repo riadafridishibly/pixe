@@ -36,6 +36,7 @@ enum SortMode: String {
 struct Config {
     let thumbDir: String
     let thumbSize: Int
+    let minSize: Int
     let diskCacheEnabled: Bool
     let cleanThumbs: Bool
     let debugMemory: Bool
@@ -54,6 +55,7 @@ struct Config {
     static func parse(_ args: [String] = Array(CommandLine.arguments.dropFirst())) -> Config {
         var thumbDir = defaultThumbDir
         var thumbSize = defaultThumbSize
+        var minSize = 0
         var diskCacheEnabled = true
         var cleanThumbs = false
         var debugMemory = false
@@ -84,6 +86,15 @@ struct Config {
                 i += 1
                 if i < args.count, let size = Int(args[i]), size > 0 {
                     thumbSize = size
+                }
+            case let a where a.hasPrefix("--min-size="):
+                if let size = Int(String(a.dropFirst("--min-size=".count))), size >= 0 {
+                    minSize = size
+                }
+            case "--min-size":
+                i += 1
+                if i < args.count, let size = Int(args[i]), size >= 0 {
+                    minSize = size
                 }
             case "--no-cache":
                 diskCacheEnabled = false
@@ -167,6 +178,7 @@ struct Config {
         return Config(
             thumbDir: thumbDir,
             thumbSize: thumbSize,
+            minSize: minSize,
             diskCacheEnabled: diskCacheEnabled,
             cleanThumbs: cleanThumbs,
             debugMemory: debugMemory,
@@ -211,6 +223,7 @@ struct Config {
         Options:
           --thumb-dir <path>   Thumbnail cache directory (default: ~/.cache/pixe/thumbs)
           --thumb-size <int>   Max thumbnail pixel size (default: 256)
+          --min-size <pixels>  Skip images smaller than <pixels> on longest side (default: 0)
           --no-cache           Disable disk thumbnail cache
           --walker <strategy>  Traversal strategy: auto|fd|readdir|foundation (default: auto)
           --sort <mode>        Sort mode: name|chrono|reverse-chrono (default: name)
