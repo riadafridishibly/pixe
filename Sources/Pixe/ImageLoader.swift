@@ -185,6 +185,73 @@ enum ImageLoader {
         return ThumbnailResult(texture: texture, cacheData: cacheData, width: width, height: height, aspect: aspect)
     }
 
+    // MARK: - Headless Thumbnail Generation (no Metal)
+
+    struct HeadlessThumbnailResult {
+        let cacheData: Data
+        let width: Int
+        let height: Int
+        let aspect: Float
+    }
+
+    static func generateThumbnailData(
+        path: String, maxPixelSize: Int
+    ) -> HeadlessThumbnailResult? {
+        return autoreleasepool { () -> HeadlessThumbnailResult? in
+            if isRawFile(path) {
+                if let result = generateRawThumbnailDataFromPreview(path: path, maxPixelSize: maxPixelSize) {
+                    return result
+                }
+            }
+
+            let url = URL(fileURLWithPath: path)
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+
+            let options: [CFString: Any] = [
+                kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true
+            ]
+            guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
+                return nil
+            }
+
+            let result = headlessResultFromCGImage(cgImage)
+            CGImageSourceRemoveCacheAtIndex(source, 0)
+            return result
+        }
+    }
+
+    private static func generateRawThumbnailDataFromPreview(
+        path: String, maxPixelSize: Int
+    ) -> HeadlessThumbnailResult? {
+        let url = URL(fileURLWithPath: path)
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+
+        let options: [CFString: Any] = [
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+            kCGImageSourceCreateThumbnailWithTransform: true
+        ]
+        guard let preview = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary),
+              preview.width >= 16, preview.height >= 16
+        else {
+            CGImageSourceRemoveCacheAtIndex(source, 0)
+            return nil
+        }
+
+        let result = headlessResultFromCGImage(preview)
+        CGImageSourceRemoveCacheAtIndex(source, 0)
+        return result
+    }
+
+    private static func headlessResultFromCGImage(_ cgImage: CGImage) -> HeadlessThumbnailResult? {
+        let width = cgImage.width
+        let height = cgImage.height
+        let aspect = Float(width) / Float(height)
+        guard let cacheData = compressCGImageToJPEG(cgImage, quality: 0.85) else { return nil }
+        return HeadlessThumbnailResult(cacheData: cacheData, width: width, height: height, aspect: aspect)
+    }
+
     /// Compress a CGImage to JPEG data in memory for disk caching.
     private static func compressCGImageToJPEG(_ image: CGImage, quality: CGFloat) -> Data? {
         let data = NSMutableData()

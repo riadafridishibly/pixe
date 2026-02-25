@@ -22,6 +22,19 @@ if config.cleanThumbs {
     exit(0)
 }
 
+if config.warmCache {
+    if !config.diskCacheEnabled {
+        fputs("pixe: --warm-cache and --no-cache are incompatible\n", stderr)
+        exit(1)
+    }
+    if config.imageArguments.isEmpty {
+        fputs("pixe: --warm-cache requires at least one directory argument\n", stderr)
+        exit(1)
+    }
+    CacheWarmer.run(config: config)
+    exit(0)
+}
+
 if config.imageArguments.isEmpty {
     fputs("Usage: pixe [options] <image> [image ...]\n", stderr)
     fputs("       pixe [options] <directory>\n", stderr)

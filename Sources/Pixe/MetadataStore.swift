@@ -258,6 +258,12 @@ final class MetadataStore {
         maxHeight: Int = 0
     ) -> [String] {
         queue.sync {
+            // Range scan on path (the primary key) so that entries cached by a
+            // parent directory (e.g. "/photos") also satisfy queries for any child
+            // (e.g. "/photos/vacation").
+            let prefix = dirPath.hasSuffix("/") ? dirPath : dirPath + "/"
+            let prefixEnd = prefix + "0"  // '0' is the character after '/' in ASCII
+
             let hasSizeFilter = minSize > 0 || minWidth > 0 || minHeight > 0 || maxWidth > 0 || maxHeight > 0
             let sql: String
             if hasSizeFilter {
@@ -268,21 +274,21 @@ final class MetadataStore {
                 SELECT de.path
                 FROM directory_entries de
                 LEFT JOIN image_meta im ON de.path = im.path
-                WHERE de.dir_path = ?1
+                WHERE de.path >= ?1 AND de.path < ?2
                   AND (im.pixel_width IS NULL
                        OR (
-                           (?2 = 0 OR max(im.pixel_width, im.pixel_height) >= ?2)
-                           AND (?3 = 0 OR im.pixel_width >= ?3)
-                           AND (?4 = 0 OR im.pixel_height >= ?4)
-                           AND (?5 = 0 OR im.pixel_width <= ?5)
-                           AND (?6 = 0 OR im.pixel_height <= ?6)
+                           (?3 = 0 OR max(im.pixel_width, im.pixel_height) >= ?3)
+                           AND (?4 = 0 OR im.pixel_width >= ?4)
+                           AND (?5 = 0 OR im.pixel_height >= ?5)
+                           AND (?6 = 0 OR im.pixel_width <= ?6)
+                           AND (?7 = 0 OR im.pixel_height <= ?7)
                        ));
                 """
             } else {
                 sql = """
                 SELECT path
                 FROM directory_entries
-                WHERE dir_path = ?1;
+                WHERE path >= ?1 AND path < ?2;
                 """
             }
             var stmt: OpaquePointer?
@@ -291,13 +297,14 @@ final class MetadataStore {
             }
             defer { sqlite3_finalize(stmt) }
 
-            sqlite3_bind_text(stmt, 1, dirPath, -1, sqliteTransient)
+            sqlite3_bind_text(stmt, 1, prefix, -1, sqliteTransient)
+            sqlite3_bind_text(stmt, 2, prefixEnd, -1, sqliteTransient)
             if hasSizeFilter {
-                sqlite3_bind_int(stmt, 2, Int32(minSize))
-                sqlite3_bind_int(stmt, 3, Int32(minWidth))
-                sqlite3_bind_int(stmt, 4, Int32(minHeight))
-                sqlite3_bind_int(stmt, 5, Int32(maxWidth))
-                sqlite3_bind_int(stmt, 6, Int32(maxHeight))
+                sqlite3_bind_int(stmt, 3, Int32(minSize))
+                sqlite3_bind_int(stmt, 4, Int32(minWidth))
+                sqlite3_bind_int(stmt, 5, Int32(minHeight))
+                sqlite3_bind_int(stmt, 6, Int32(maxWidth))
+                sqlite3_bind_int(stmt, 7, Int32(maxHeight))
             }
             var paths: [String] = []
             while sqlite3_step(stmt) == SQLITE_ROW {
@@ -360,20 +367,24 @@ final class MetadataStore {
 
     func replaceDirectoryEntries(dirPath: String, paths: [String]) {
         queue.sync {
+            let prefix = dirPath.hasSuffix("/") ? dirPath : dirPath + "/"
+            let prefixEnd = prefix + "0"
+
             guard exec("BEGIN IMMEDIATE TRANSACTION;") else { return }
 
             var deleteStmt: OpaquePointer?
-            if sqlite3_prepare_v2(db, "DELETE FROM directory_entries WHERE dir_path = ?1;", -1, &deleteStmt, nil) == SQLITE_OK,
+            if sqlite3_prepare_v2(db, "DELETE FROM directory_entries WHERE path >= ?1 AND path < ?2;", -1, &deleteStmt, nil) == SQLITE_OK,
                let deleteStmt
             {
-                sqlite3_bind_text(deleteStmt, 1, dirPath, -1, sqliteTransient)
+                sqlite3_bind_text(deleteStmt, 1, prefix, -1, sqliteTransient)
+                sqlite3_bind_text(deleteStmt, 2, prefixEnd, -1, sqliteTransient)
                 _ = sqlite3_step(deleteStmt)
                 sqlite3_finalize(deleteStmt)
             }
 
             let insertSQL = """
-            INSERT OR IGNORE INTO directory_entries(dir_path, path, updated_at)
-            VALUES(?1, ?2, ?3);
+            INSERT OR REPLACE INTO directory_entries(path, updated_at)
+            VALUES(?1, ?2);
             """
             var insertStmt: OpaquePointer?
             if sqlite3_prepare_v2(db, insertSQL, -1, &insertStmt, nil) == SQLITE_OK,
@@ -383,9 +394,8 @@ final class MetadataStore {
                 for path in paths {
                     sqlite3_reset(insertStmt)
                     sqlite3_clear_bindings(insertStmt)
-                    sqlite3_bind_text(insertStmt, 1, dirPath, -1, sqliteTransient)
-                    sqlite3_bind_text(insertStmt, 2, path, -1, sqliteTransient)
-                    sqlite3_bind_double(insertStmt, 3, now)
+                    sqlite3_bind_text(insertStmt, 1, path, -1, sqliteTransient)
+                    sqlite3_bind_double(insertStmt, 2, now)
                     _ = sqlite3_step(insertStmt)
                 }
                 sqlite3_finalize(insertStmt)
@@ -395,7 +405,51 @@ final class MetadataStore {
         }
     }
 
+    private static let currentSchemaVersion = 2
+
+    private func schemaVersion() -> Int {
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "PRAGMA user_version;", -1, &stmt, nil) == SQLITE_OK,
+              let stmt else { return 0 }
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return 0 }
+        return Int(sqlite3_column_int(stmt, 0))
+    }
+
+    private func setSchemaVersion(_ version: Int) {
+        _ = exec("PRAGMA user_version = \(version);")
+    }
+
     private func migrateSchema() -> Bool {
+        let version = schemaVersion()
+
+        // Fresh database — create all tables at current schema
+        if version == 0 {
+            guard createTablesV2() else { return false }
+            setSchemaVersion(Self.currentSchemaVersion)
+            return true
+        }
+
+        // Incremental migrations
+        if version < 2 {
+            // v1 → v2: directory_entries dropped dir_path column,
+            // path is now the sole primary key
+            guard exec("DROP TABLE IF EXISTS directory_entries;"),
+                  exec(
+                      """
+                      CREATE TABLE IF NOT EXISTS directory_entries (
+                          path TEXT PRIMARY KEY,
+                          updated_at REAL NOT NULL
+                      );
+                      """
+                  ) else { return false }
+        }
+
+        setSchemaVersion(Self.currentSchemaVersion)
+        return true
+    }
+
+    private func createTablesV2() -> Bool {
         exec(
             """
             CREATE TABLE IF NOT EXISTS thumb_meta (
@@ -427,15 +481,11 @@ final class MetadataStore {
             exec(
                 """
                 CREATE TABLE IF NOT EXISTS directory_entries (
-                    dir_path TEXT NOT NULL,
-                    path TEXT NOT NULL,
-                    updated_at REAL NOT NULL,
-                    PRIMARY KEY(dir_path, path)
+                    path TEXT PRIMARY KEY,
+                    updated_at REAL NOT NULL
                 );
                 """
             ) &&
-            exec("CREATE INDEX IF NOT EXISTS idx_directory_entries_path ON directory_entries(path);") &&
-            exec("CREATE INDEX IF NOT EXISTS idx_directory_entries_dir ON directory_entries(dir_path);") &&
             exec("CREATE INDEX IF NOT EXISTS idx_image_exif_capture ON image_meta(exif_capture_ts);")
     }
 
