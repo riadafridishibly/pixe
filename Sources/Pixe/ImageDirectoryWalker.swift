@@ -118,7 +118,8 @@ private struct FDDirectoryWalker: DirectoryImageWalking {
             guard !path.isEmpty, config.extensionFilter.accepts(path),
                   !config.isPathExcludedByDir(path) else { return }
             batch.append(path)
-            if batch.count >= 1000 {
+            let threshold = emittedAny ? 1000 : 20
+            if batch.count >= threshold {
                 emitBatch(batch)
                 emittedAny = true
                 batch.removeAll(keepingCapacity: true)
@@ -187,6 +188,7 @@ private struct ReaddirDirectoryWalker: DirectoryImageWalking {
         var stack: [String] = [rootPath]
         var batch: [String] = []
         batch.reserveCapacity(1000)
+        var emittedFirst = false
 
         while let dirPath = stack.popLast() {
             guard let dir = opendir(dirPath) else {
@@ -225,8 +227,10 @@ private struct ReaddirDirectoryWalker: DirectoryImageWalking {
                         continue
                     }
                     batch.append(fullPath)
-                    if batch.count >= 1000 {
+                    let threshold = emittedFirst ? 1000 : 20
+                    if batch.count >= threshold {
                         emitBatch(batch)
+                        emittedFirst = true
                         batch.removeAll(keepingCapacity: true)
                     }
 
@@ -304,6 +308,7 @@ private struct FoundationDirectoryWalker: DirectoryImageWalking {
 
         var batch: [String] = []
         batch.reserveCapacity(500)
+        var emittedFirst = false
 
         for case let fileURL as URL in enumerator {
             if !config.excludedDirNames.isEmpty || !config.excludedDirPaths.isEmpty {
@@ -328,8 +333,10 @@ private struct FoundationDirectoryWalker: DirectoryImageWalking {
             }
 
             batch.append(fileURL.path)
-            if batch.count >= 500 {
+            let threshold = emittedFirst ? 500 : 20
+            if batch.count >= threshold {
                 emitBatch(batch)
+                emittedFirst = true
                 batch.removeAll(keepingCapacity: true)
             }
         }
