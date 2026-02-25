@@ -61,7 +61,6 @@ enum ImageLoader {
                 MemoryProfiler.logTextureCreated("loadDisplayTexture", texture: tex, device: device)
             }
 
-            CGImageSourceRemoveCacheAtIndex(imageSource, 0)
             return texture
         }
     }
@@ -110,13 +109,14 @@ enum ImageLoader {
         guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
             return nil
         }
-        CGImageSourceRemoveCacheAtIndex(source, 0)
         return cgImage
     }
 
     /// RAW preview thumbnail: extracts the embedded JPEG preview without forcing a full RAW decode.
     /// Returns nil if no usable preview (>= 16px) is available.
-    private static func loadRawPreviewCGImage(path: String, maxPixelSize: Int) -> CGImage? {
+    private static func loadRawPreviewCGImage(
+        path: String, maxPixelSize: Int, minLongSide: Int = 16
+    ) -> CGImage? {
         let url = URL(fileURLWithPath: path)
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
 
@@ -125,12 +125,10 @@ enum ImageLoader {
             kCGImageSourceCreateThumbnailWithTransform: true
         ]
         guard let preview = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary),
-              preview.width >= 16, preview.height >= 16
+              max(preview.width, preview.height) >= minLongSide
         else {
-            CGImageSourceRemoveCacheAtIndex(source, 0)
             return nil
         }
-        CGImageSourceRemoveCacheAtIndex(source, 0)
         return preview
     }
 
@@ -365,23 +363,9 @@ enum ImageLoader {
         from path: String, device: MTLDevice, maxPixelSize: Int, minLongSide: Int
     ) -> MTLTexture? {
         return autoreleasepool { () -> MTLTexture? in
-            let url = URL(fileURLWithPath: path)
-            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
-
-            // Extract embedded JPEG preview — do NOT set CreateThumbnailFromImageAlways
-            // which would force a full RAW decode
-            let options: [CFString: Any] = [
-                kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
-                kCGImageSourceCreateThumbnailWithTransform: true
-            ]
-            guard let preview = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
-                return nil
-            }
-            let longSide = max(preview.width, preview.height)
-            guard longSide >= minLongSide else {
-                CGImageSourceRemoveCacheAtIndex(source, 0)
-                return nil
-            }
+            guard let preview = loadRawPreviewCGImage(
+                path: path, maxPixelSize: maxPixelSize, minLongSide: minLongSide
+            ) else { return nil }
             MemoryProfiler.logEvent(
                 "loadPreview: \(preview.width)×\(preview.height) from \((path as NSString).lastPathComponent)",
                 device: device
@@ -390,9 +374,6 @@ enum ImageLoader {
             if let tex = texture {
                 MemoryProfiler.logTextureCreated("RAW preview", texture: tex, device: device)
             }
-
-            CGImageSourceRemoveCacheAtIndex(source, 0)
-
             return texture
         }
     }

@@ -343,7 +343,7 @@ class ThumbnailCache {
     }
 
     static func cacheKey(for path: String, mtime: Double) -> String {
-        let input = "\(path):\(mtime)"
+        let input = "\(path):\(String(format: "%.6f", mtime))"
         return sha256(input)
     }
 

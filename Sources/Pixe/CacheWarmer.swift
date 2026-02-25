@@ -53,6 +53,10 @@ enum CacheWarmer {
             }
         }
 
+        // Deduplicate: overlapping directory arguments can produce duplicate entries
+        var seen = Set<String>()
+        allFiles = allFiles.filter { seen.insert($0).inserted }
+
         // Persist directory entries
         for (dirPath, paths) in filesByDirectory {
             metadataStore.replaceDirectoryEntries(dirPath: dirPath, paths: paths)
@@ -120,9 +124,12 @@ enum CacheWarmer {
         var didFail = false
 
         // Read file attributes once for the entire function
-        let attrs = try? FileManager.default.attributesOfItem(atPath: path)
-        let mtime = (attrs?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
-        let fileSize = (attrs?[.size] as? NSNumber)?.int64Value ?? 0
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: path) else {
+            progress.recordFailed(path: path)
+            return
+        }
+        let mtime = (attrs[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+        let fileSize = (attrs[.size] as? NSNumber)?.int64Value ?? 0
 
         // 1. Thumbnail
         let cacheKey = ThumbnailCache.cacheKey(for: path, mtime: mtime)
@@ -194,6 +201,7 @@ private class WarmCacheProgress {
     private var cached: Int = 0
     private var failed: Int = 0
     private let lock = NSLock()
+    private let printLock = NSLock()
     private let startTime = DispatchTime.now()
 
     init(total: Int, isTTY: Bool) {
@@ -205,24 +213,30 @@ private class WarmCacheProgress {
         lock.lock()
         generated += 1
         let s = lockedSnapshot()
-        printUpdate(s, path: path)
         lock.unlock()
+        printLock.lock()
+        printUpdate(s, path: path)
+        printLock.unlock()
     }
 
     func recordCached(path: String) {
         lock.lock()
         cached += 1
         let s = lockedSnapshot()
-        printUpdate(s, path: path)
         lock.unlock()
+        printLock.lock()
+        printUpdate(s, path: path)
+        printLock.unlock()
     }
 
     func recordFailed(path: String) {
         lock.lock()
         failed += 1
         let s = lockedSnapshot()
-        printUpdate(s, path: path)
         lock.unlock()
+        printLock.lock()
+        printUpdate(s, path: path)
+        printLock.unlock()
     }
 
     func snapshot() -> Snapshot {

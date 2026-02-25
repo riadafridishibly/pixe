@@ -261,8 +261,9 @@ final class MetadataStore {
             // Range scan on path (the primary key) so that entries cached by a
             // parent directory (e.g. "/photos") also satisfy queries for any child
             // (e.g. "/photos/vacation").
-            let prefix = dirPath.hasSuffix("/") ? dirPath : dirPath + "/"
-            let prefixEnd = prefix + "0"  // '0' is the character after '/' in ASCII
+            let base = dirPath.hasSuffix("/") ? String(dirPath.dropLast()) : dirPath
+            let prefix = base + "/"
+            let prefixEnd = base + "0"  // '0' (ASCII 48) follows '/' (ASCII 47)
 
             let hasSizeFilter = minSize > 0 || minWidth > 0 || minHeight > 0 || maxWidth > 0 || maxHeight > 0
             let sql: String
@@ -367,8 +368,9 @@ final class MetadataStore {
 
     func replaceDirectoryEntries(dirPath: String, paths: [String]) {
         queue.sync {
-            let prefix = dirPath.hasSuffix("/") ? dirPath : dirPath + "/"
-            let prefixEnd = prefix + "0"
+            let base = dirPath.hasSuffix("/") ? String(dirPath.dropLast()) : dirPath
+            let prefix = base + "/"
+            let prefixEnd = base + "0"
 
             guard exec("BEGIN IMMEDIATE TRANSACTION;") else { return }
 
@@ -412,7 +414,12 @@ final class MetadataStore {
                 }
             }
 
-            _ = exec(ok ? "COMMIT;" : "ROLLBACK;")
+            if ok {
+                _ = exec("COMMIT;")
+            } else {
+                fputs("pixe: replaceDirectoryEntries: rolling back transaction for \(dirPath)\n", stderr)
+                _ = exec("ROLLBACK;")
+            }
         }
     }
 
