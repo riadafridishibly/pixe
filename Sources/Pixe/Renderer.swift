@@ -84,6 +84,7 @@ class Renderer: NSObject, MTKViewDelegate {
     private var loadGeneration: Int = 0  // increments on each navigation, stale tasks bail out
     private var prefetchGeneration: Int = 0  // increments whenever adjacency set changes
     private var thumbnailSearchQuery: String?
+    private var infoRestoreWorkItem: DispatchWorkItem?
     private let displayDecodeQueue = DispatchQueue(label: "pixe.display-decode", qos: .userInitiated)
     private let prefetchDecodeQueue = DispatchQueue(label: "pixe.prefetch-decode", qos: .utility, attributes: .concurrent)
     private let prefetchDecodeSemaphore = DispatchSemaphore(value: 1)
@@ -669,6 +670,46 @@ class Renderer: NSObject, MTKViewDelegate {
         case .image:
             loadCurrentImage()
         }
+    }
+
+    // MARK: - Clipboard
+
+    func copyCurrentImage() {
+        guard let path = currentImagePath() else { return }
+        guard let nsImage = NSImage(contentsOfFile: path) else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.writeObjects([nsImage])
+        showTemporaryInfo("Copied image to clipboard")
+    }
+
+    func copyCurrentImagePath() {
+        guard let path = currentImagePath() else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(path, forType: .string)
+        showTemporaryInfo("Copied path to clipboard")
+    }
+
+    private func currentImagePath() -> String? {
+        switch mode {
+        case .thumbnail:
+            let index = gridLayout.selectedIndex
+            guard index < imageList.allPaths.count else { return nil }
+            return imageList.allPaths[index]
+        case .image:
+            return imageList.currentPath
+        }
+    }
+
+    private func showTemporaryInfo(_ message: String) {
+        infoRestoreWorkItem?.cancel()
+        window?.updateInfo(message)
+        let item = DispatchWorkItem { [weak self] in
+            self?.updateInfoBar()
+        }
+        infoRestoreWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: item)
     }
 
     // MARK: - Mode Switching

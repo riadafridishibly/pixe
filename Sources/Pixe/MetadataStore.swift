@@ -248,13 +248,43 @@ final class MetadataStore {
         }
     }
 
-    func cachedDirectoryEntries(dirPath: String, filter: ExtensionFilter) -> [String] {
+    func cachedDirectoryEntries(
+        dirPath: String,
+        filter: ExtensionFilter,
+        minSize: Int = 0,
+        minWidth: Int = 0,
+        minHeight: Int = 0,
+        maxWidth: Int = 0,
+        maxHeight: Int = 0
+    ) -> [String] {
         queue.sync {
-            let sql = """
-            SELECT path
-            FROM directory_entries
-            WHERE dir_path = ?1;
-            """
+            let hasSizeFilter = minSize > 0 || minWidth > 0 || minHeight > 0 || maxWidth > 0 || maxHeight > 0
+            let sql: String
+            if hasSizeFilter {
+                // JOIN with image_meta to filter by cached dimensions.
+                // Paths without cached dimensions (NULL) are included and will be
+                // checked on the fly, then persisted for next time.
+                sql = """
+                SELECT de.path
+                FROM directory_entries de
+                LEFT JOIN image_meta im ON de.path = im.path
+                WHERE de.dir_path = ?1
+                  AND (im.pixel_width IS NULL
+                       OR (
+                           (?2 = 0 OR max(im.pixel_width, im.pixel_height) >= ?2)
+                           AND (?3 = 0 OR im.pixel_width >= ?3)
+                           AND (?4 = 0 OR im.pixel_height >= ?4)
+                           AND (?5 = 0 OR im.pixel_width <= ?5)
+                           AND (?6 = 0 OR im.pixel_height <= ?6)
+                       ));
+                """
+            } else {
+                sql = """
+                SELECT path
+                FROM directory_entries
+                WHERE dir_path = ?1;
+                """
+            }
             var stmt: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt else {
                 return []
@@ -262,6 +292,13 @@ final class MetadataStore {
             defer { sqlite3_finalize(stmt) }
 
             sqlite3_bind_text(stmt, 1, dirPath, -1, sqliteTransient)
+            if hasSizeFilter {
+                sqlite3_bind_int(stmt, 2, Int32(minSize))
+                sqlite3_bind_int(stmt, 3, Int32(minWidth))
+                sqlite3_bind_int(stmt, 4, Int32(minHeight))
+                sqlite3_bind_int(stmt, 5, Int32(maxWidth))
+                sqlite3_bind_int(stmt, 6, Int32(maxHeight))
+            }
             var paths: [String] = []
             while sqlite3_step(stmt) == SQLITE_ROW {
                 guard let cstr = sqlite3_column_text(stmt, 0) else { continue }
@@ -270,6 +307,54 @@ final class MetadataStore {
                 paths.append(path)
             }
             return paths
+        }
+    }
+
+    func cachedDimensions(path: String) -> (width: Int, height: Int)? {
+        queue.sync {
+            let sql = """
+            SELECT pixel_width, pixel_height
+            FROM image_meta
+            WHERE path = ?1 AND pixel_width IS NOT NULL
+            LIMIT 1;
+            """
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt else {
+                return nil
+            }
+            defer { sqlite3_finalize(stmt) }
+
+            sqlite3_bind_text(stmt, 1, path, -1, sqliteTransient)
+            guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+
+            let w = Int(sqlite3_column_int(stmt, 0))
+            let h = Int(sqlite3_column_int(stmt, 1))
+            return (width: w, height: h)
+        }
+    }
+
+    func upsertDimensions(path: String, width: Int, height: Int) {
+        queue.sync {
+            let sql = """
+            INSERT INTO image_meta(path, mtime, file_size, pixel_width, pixel_height, exif_checked, updated_at)
+            VALUES(?1, 0, 0, ?2, ?3, 0, ?4)
+            ON CONFLICT(path) DO UPDATE SET
+                pixel_width = excluded.pixel_width,
+                pixel_height = excluded.pixel_height,
+                updated_at = excluded.updated_at;
+            """
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt else {
+                return
+            }
+            defer { sqlite3_finalize(stmt) }
+
+            let now = Date().timeIntervalSince1970
+            sqlite3_bind_text(stmt, 1, path, -1, sqliteTransient)
+            sqlite3_bind_int64(stmt, 2, Int64(width))
+            sqlite3_bind_int64(stmt, 3, Int64(height))
+            sqlite3_bind_double(stmt, 4, now)
+            _ = sqlite3_step(stmt)
         }
     }
 
@@ -333,6 +418,8 @@ final class MetadataStore {
                     file_size INTEGER NOT NULL,
                     exif_capture_ts REAL,
                     exif_checked INTEGER NOT NULL DEFAULT 0,
+                    pixel_width INTEGER,
+                    pixel_height INTEGER,
                     updated_at REAL NOT NULL
                 );
                 """

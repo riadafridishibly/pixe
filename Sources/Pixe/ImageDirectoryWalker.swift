@@ -83,6 +83,10 @@ private struct FDDirectoryWalker: DirectoryImageWalking {
             arguments.append("--extension")
             arguments.append(ext)
         }
+        for dir in config.excludedDirNames.sorted() {
+            arguments.append("--exclude")
+            arguments.append(dir)
+        }
         arguments.append(".")
         arguments.append(rootPath)
         process.arguments = arguments
@@ -111,7 +115,8 @@ private struct FDDirectoryWalker: DirectoryImageWalking {
                 return
             }
             partialPathBytes.removeAll(keepingCapacity: true)
-            guard !path.isEmpty, config.extensionFilter.accepts(path) else { return }
+            guard !path.isEmpty, config.extensionFilter.accepts(path),
+                  !config.isPathExcludedByDir(path) else { return }
             batch.append(path)
             if batch.count >= 1000 {
                 emitBatch(batch)
@@ -206,7 +211,9 @@ private struct ReaddirDirectoryWalker: DirectoryImageWalking {
 
                 switch entryType(entry, fullPath: fullPath) {
                 case .directory:
-                    if shouldSkipPackage(name: name) {
+                    if shouldSkipPackage(name: name)
+                        || config.excludedDirNames.contains(name)
+                        || config.excludedDirPaths.contains(fullPath) {
                         continue
                     }
                     stack.append(fullPath)
@@ -287,7 +294,7 @@ private struct FoundationDirectoryWalker: DirectoryImageWalking {
     func walk(at rootPath: String, config: Config, emitBatch: @escaping ([String]) -> Void) -> Bool {
         let fileManager = FileManager.default
         let url = URL(fileURLWithPath: rootPath)
-        let keys: [URLResourceKey] = [.isRegularFileKey, .contentTypeKey]
+        let keys: [URLResourceKey] = [.isRegularFileKey, .contentTypeKey, .isDirectoryKey]
 
         guard let enumerator = fileManager.enumerator(
             at: url,
@@ -299,6 +306,18 @@ private struct FoundationDirectoryWalker: DirectoryImageWalking {
         batch.reserveCapacity(500)
 
         for case let fileURL as URL in enumerator {
+            if !config.excludedDirNames.isEmpty || !config.excludedDirPaths.isEmpty {
+                if let rv = try? fileURL.resourceValues(forKeys: [.isDirectoryKey]),
+                   rv.isDirectory == true {
+                    let dirName = fileURL.lastPathComponent
+                    let dirPath = fileURL.path
+                    if config.excludedDirNames.contains(dirName) || config.excludedDirPaths.contains(dirPath) {
+                        enumerator.skipDescendants()
+                        continue
+                    }
+                    continue
+                }
+            }
             guard let values = try? fileURL.resourceValues(forKeys: Set(keys)),
                   let isFile = values.isRegularFile, isFile,
                   let contentType = values.contentType,
