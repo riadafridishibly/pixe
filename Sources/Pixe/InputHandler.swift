@@ -351,6 +351,10 @@ class InputHandler {
             renderer.imageList.goFirst()
             renderer.loadCurrentImage()
 
+        case "r":
+            renderer.rotateCW()
+            view.needsDisplay = true
+
         case "y":
             renderer.copyCurrentImage()
 

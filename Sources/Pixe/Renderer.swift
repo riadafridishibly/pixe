@@ -54,6 +54,7 @@ class Renderer: NSObject, MTKViewDelegate {
     // Zoom/pan state
     var scale: Float = 1.0
     var translation: SIMD2<Float> = .zero
+    var rotationSteps: Int = 0  // 0–3, each step = 90° CW
     var imageAspect: Float = 1.0
     var viewportSize: SIMD2<Float> = SIMD2(800, 600)
 
@@ -213,25 +214,36 @@ class Renderer: NSObject, MTKViewDelegate {
     func buildTransformMatrix() -> simd_float4x4 {
         let viewAspect = viewportSize.x / viewportSize.y
 
+        // For 90°/270° rotations the image dimensions are swapped,
+        // so fit against the flipped aspect ratio.
+        let isOddRotation = (rotationSteps % 2) != 0
+        let fittingAspect = isOddRotation ? (1.0 / imageAspect) : imageAspect
+
         var sx: Float = 1.0
         var sy: Float = 1.0
-        if imageAspect > viewAspect {
-            sy = viewAspect / imageAspect
+        if fittingAspect > viewAspect {
+            sy = viewAspect / fittingAspect
         } else {
-            sx = imageAspect / viewAspect
+            sx = fittingAspect / viewAspect
         }
 
         sx *= scale
         sy *= scale
 
+        // 2D rotation matrix components
+        let angle = Float(rotationSteps) * (.pi / 2.0)
+        let cosA = cos(angle)
+        let sinA = sin(angle)
+
         let tx = translation.x
         let ty = translation.y
 
+        // Compose: S * R (rotate quad first, then scale to fit viewport)
         return simd_float4x4(
-            SIMD4<Float>(sx, 0,  0, 0),
-            SIMD4<Float>(0,  sy, 0, 0),
-            SIMD4<Float>(0,  0,  1, 0),
-            SIMD4<Float>(tx, ty, 0, 1)
+            SIMD4<Float>( sx * cosA, -sy * sinA, 0, 0),
+            SIMD4<Float>( sx * sinA,  sy * cosA, 0, 0),
+            SIMD4<Float>( 0,          0,         1, 0),
+            SIMD4<Float>( tx,         ty,        0, 1)
         )
     }
 
@@ -454,6 +466,11 @@ class Renderer: NSObject, MTKViewDelegate {
     func resetView() {
         scale = 1.0
         translation = .zero
+        rotationSteps = 0
+    }
+
+    func rotateCW() {
+        rotationSteps = (rotationSteps + 1) % 4
     }
 
     func updateWindowTitle() {
