@@ -82,6 +82,7 @@ pixe [options] <image|directory> ...
 | `--exclude <exts>` | Hide these extensions (last one wins if both `--include` and `--exclude` are set) |
 | `--exclude-dir <dirs>` | Skip directories by name or path (e.g. `node_modules,~/Photos/Trash`) |
 | `--quiet` | Suppress startup config message |
+| `--warm-cache` | Pre-populate thumbnail/metadata cache headlessly and exit |
 | `--clean-thumbs` | Delete thumbnail cache and exit |
 | `--debug-mem` | Enable memory profiler event logging to stderr |
 | `-v, --version` | Show version |
@@ -118,6 +119,7 @@ pixe --min-width 1920 ~/Photos  # Only images at least 1920px wide
 pixe --max-height 1080 ~/Photos # Only images at most 1080px tall
 pixe --exclude-dir=node_modules ~/project # Skip node_modules directories
 pixe --no-cache ~/project      # Skip disk cache
+pixe --warm-cache ~/Pictures   # Pre-populate cache headlessly
 ```
 
 ## Controls
