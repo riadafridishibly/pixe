@@ -39,6 +39,7 @@ if config.imageArguments.isEmpty {
     fputs("Usage: pixe [options] <image> [image ...]\n", stderr)
     fputs("       pixe [options] <directory>\n", stderr)
     fputs("       pixe --clean-thumbs\n", stderr)
+    fputs("       pixe --warm-cache <directory>\n", stderr)
     fputs("       pixe --help\n", stderr)
     exit(1)
 }

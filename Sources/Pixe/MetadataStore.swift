@@ -372,40 +372,51 @@ final class MetadataStore {
 
             guard exec("BEGIN IMMEDIATE TRANSACTION;") else { return }
 
+            var ok = true
+
             var deleteStmt: OpaquePointer?
             if sqlite3_prepare_v2(db, "DELETE FROM directory_entries WHERE path >= ?1 AND path < ?2;", -1, &deleteStmt, nil) == SQLITE_OK,
                let deleteStmt
             {
                 sqlite3_bind_text(deleteStmt, 1, prefix, -1, sqliteTransient)
                 sqlite3_bind_text(deleteStmt, 2, prefixEnd, -1, sqliteTransient)
-                _ = sqlite3_step(deleteStmt)
+                if sqlite3_step(deleteStmt) != SQLITE_DONE { ok = false }
                 sqlite3_finalize(deleteStmt)
+            } else {
+                ok = false
             }
 
-            let insertSQL = """
-            INSERT OR REPLACE INTO directory_entries(path, updated_at)
-            VALUES(?1, ?2);
-            """
-            var insertStmt: OpaquePointer?
-            if sqlite3_prepare_v2(db, insertSQL, -1, &insertStmt, nil) == SQLITE_OK,
-               let insertStmt
-            {
-                let now = Date().timeIntervalSince1970
-                for path in paths {
-                    sqlite3_reset(insertStmt)
-                    sqlite3_clear_bindings(insertStmt)
-                    sqlite3_bind_text(insertStmt, 1, path, -1, sqliteTransient)
-                    sqlite3_bind_double(insertStmt, 2, now)
-                    _ = sqlite3_step(insertStmt)
+            if ok {
+                let insertSQL = """
+                INSERT OR REPLACE INTO directory_entries(path, updated_at)
+                VALUES(?1, ?2);
+                """
+                var insertStmt: OpaquePointer?
+                if sqlite3_prepare_v2(db, insertSQL, -1, &insertStmt, nil) == SQLITE_OK,
+                   let insertStmt
+                {
+                    let now = Date().timeIntervalSince1970
+                    for path in paths {
+                        sqlite3_reset(insertStmt)
+                        sqlite3_clear_bindings(insertStmt)
+                        sqlite3_bind_text(insertStmt, 1, path, -1, sqliteTransient)
+                        sqlite3_bind_double(insertStmt, 2, now)
+                        if sqlite3_step(insertStmt) != SQLITE_DONE {
+                            ok = false
+                            break
+                        }
+                    }
+                    sqlite3_finalize(insertStmt)
+                } else {
+                    ok = false
                 }
-                sqlite3_finalize(insertStmt)
             }
 
-            _ = exec("COMMIT;")
+            _ = exec(ok ? "COMMIT;" : "ROLLBACK;")
         }
     }
 
-    private static let currentSchemaVersion = 2
+    private static let currentSchemaVersion = 1
 
     private func schemaVersion() -> Int {
         var stmt: OpaquePointer?
@@ -422,34 +433,14 @@ final class MetadataStore {
 
     private func migrateSchema() -> Bool {
         let version = schemaVersion()
-
-        // Fresh database — create all tables at current schema
         if version == 0 {
-            guard createTablesV2() else { return false }
+            guard createTables() else { return false }
             setSchemaVersion(Self.currentSchemaVersion)
-            return true
         }
-
-        // Incremental migrations
-        if version < 2 {
-            // v1 → v2: directory_entries dropped dir_path column,
-            // path is now the sole primary key
-            guard exec("DROP TABLE IF EXISTS directory_entries;"),
-                  exec(
-                      """
-                      CREATE TABLE IF NOT EXISTS directory_entries (
-                          path TEXT PRIMARY KEY,
-                          updated_at REAL NOT NULL
-                      );
-                      """
-                  ) else { return false }
-        }
-
-        setSchemaVersion(Self.currentSchemaVersion)
         return true
     }
 
-    private func createTablesV2() -> Bool {
+    private func createTables() -> Bool {
         exec(
             """
             CREATE TABLE IF NOT EXISTS thumb_meta (

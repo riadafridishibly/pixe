@@ -339,6 +339,10 @@ class ThumbnailCache {
 
     static func cacheKey(for path: String) -> String {
         let mtime = fileModTime(path)
+        return cacheKey(for: path, mtime: mtime)
+    }
+
+    static func cacheKey(for path: String, mtime: Double) -> String {
         let input = "\(path):\(mtime)"
         return sha256(input)
     }

@@ -20,12 +20,13 @@ enum CacheWarmer {
         var filesByDirectory: [String: [String]] = [:]
 
         for arg in config.imageArguments {
-            let path: String
+            var path: String
             if arg.hasPrefix("/") || arg.hasPrefix("~") {
                 path = (arg as NSString).expandingTildeInPath
             } else {
                 path = (fm.currentDirectoryPath as NSString).appendingPathComponent(arg)
             }
+            path = URL(fileURLWithPath: path).standardized.path
 
             var isDir: ObjCBool = false
             guard fm.fileExists(atPath: path, isDirectory: &isDir) else {
@@ -118,8 +119,13 @@ enum CacheWarmer {
         var didGenerate = false
         var didFail = false
 
+        // Read file attributes once for the entire function
+        let attrs = try? FileManager.default.attributesOfItem(atPath: path)
+        let mtime = (attrs?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+        let fileSize = (attrs?[.size] as? NSNumber)?.int64Value ?? 0
+
         // 1. Thumbnail
-        let cacheKey = ThumbnailCache.cacheKey(for: path)
+        let cacheKey = ThumbnailCache.cacheKey(for: path, mtime: mtime)
         let diskPath = ThumbnailCache.diskPath(for: cacheKey, thumbDir: thumbDir)
 
         let hasThumbMeta = metadataStore.thumbnail(forKey: cacheKey) != nil
@@ -134,11 +140,10 @@ enum CacheWarmer {
                 }
                 do {
                     try result.cacheData.write(to: URL(fileURLWithPath: diskPath), options: .atomic)
-                    let sourceMtime = ThumbnailCache.fileModTime(path)
                     metadataStore.upsertThumbnail(
                         key: cacheKey,
                         sourcePath: path,
-                        sourceMtime: sourceMtime,
+                        sourceMtime: mtime,
                         width: result.width,
                         height: result.height,
                         aspect: result.aspect
@@ -153,10 +158,6 @@ enum CacheWarmer {
         }
 
         // 2. EXIF
-        let attrs = try? FileManager.default.attributesOfItem(atPath: path)
-        let mtime = (attrs?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
-        let fileSize = (attrs?[.size] as? NSNumber)?.int64Value ?? 0
-
         if metadataStore.cachedExif(path: path, mtime: mtime, fileSize: fileSize) == nil {
             let captureDate = ImageList.readExifCaptureDate(for: path)
             metadataStore.upsertExif(path: path, mtime: mtime, fileSize: fileSize, captureDate: captureDate)
@@ -204,24 +205,24 @@ private class WarmCacheProgress {
         lock.lock()
         generated += 1
         let s = lockedSnapshot()
-        lock.unlock()
         printUpdate(s, path: path)
+        lock.unlock()
     }
 
     func recordCached(path: String) {
         lock.lock()
         cached += 1
         let s = lockedSnapshot()
-        lock.unlock()
         printUpdate(s, path: path)
+        lock.unlock()
     }
 
     func recordFailed(path: String) {
         lock.lock()
         failed += 1
         let s = lockedSnapshot()
-        lock.unlock()
         printUpdate(s, path: path)
+        lock.unlock()
     }
 
     func snapshot() -> Snapshot {
