@@ -457,7 +457,7 @@ class ImageList {
         )
     }
 
-    private static func readExifCaptureDate(for path: String) -> Date? {
+    static func readExifCaptureDate(for path: String) -> Date? {
         let url = URL(fileURLWithPath: path)
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
               let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]

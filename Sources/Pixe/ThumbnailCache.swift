@@ -337,13 +337,17 @@ class ThumbnailCache {
 
     // MARK: - Disk Cache
 
-    private static func cacheKey(for path: String) -> String {
+    static func cacheKey(for path: String) -> String {
         let mtime = fileModTime(path)
-        let input = "\(path):\(mtime)"
+        return cacheKey(for: path, mtime: mtime)
+    }
+
+    static func cacheKey(for path: String, mtime: Double) -> String {
+        let input = "\(path):\(String(format: "%.6f", mtime))"
         return sha256(input)
     }
 
-    private static func fileModTime(_ path: String) -> Double {
+    static func fileModTime(_ path: String) -> Double {
         guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
               let date = attrs[.modificationDate] as? Date
         else {
@@ -352,7 +356,7 @@ class ThumbnailCache {
         return date.timeIntervalSince1970
     }
 
-    private static func sha256(_ string: String) -> String {
+    static func sha256(_ string: String) -> String {
         let data = Data(string.utf8)
         var hash = [UInt8](repeating: 0, count: Int(CC_SHA256_DIGEST_LENGTH))
         data.withUnsafeBytes { ptr in
@@ -361,10 +365,16 @@ class ThumbnailCache {
         return hash.map { String(format: "%02x", $0) }.joined()
     }
 
-    private func diskPath(for key: String) -> String {
+    static func diskPath(for key: String, thumbDir: String) -> String {
         let subdir = (thumbDir as NSString).appendingPathComponent(String(key.prefix(2)))
-        ensureDirectory(subdir)
         return (subdir as NSString).appendingPathComponent(key + ".jpg")
+    }
+
+    private func diskPath(for key: String) -> String {
+        let path = Self.diskPath(for: key, thumbDir: thumbDir)
+        let subdir = (path as NSString).deletingLastPathComponent
+        ensureDirectory(subdir)
+        return path
     }
 
     private func writeDiskCache(data: Data, to path: String) {

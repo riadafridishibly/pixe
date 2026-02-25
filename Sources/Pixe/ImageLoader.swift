@@ -61,7 +61,6 @@ enum ImageLoader {
                 MemoryProfiler.logTextureCreated("loadDisplayTexture", texture: tex, device: device)
             }
 
-            CGImageSourceRemoveCacheAtIndex(imageSource, 0)
             return texture
         }
     }
@@ -80,55 +79,57 @@ enum ImageLoader {
         path: String, device: MTLDevice, maxPixelSize: Int
     ) -> ThumbnailResult? {
         return autoreleasepool { () -> ThumbnailResult? in
-            // Fast path: RAW files — extract embedded JPEG preview instead of full decode
+            let cgImage: CGImage
             if isRawFile(path) {
-                if let result = generateRawThumbnailFromPreview(path: path, device: device, maxPixelSize: maxPixelSize) {
-                    return result
+                if let raw = loadRawPreviewCGImage(path: path, maxPixelSize: maxPixelSize) {
+                    cgImage = raw
+                } else if let std = loadThumbnailCGImage(path: path, maxPixelSize: maxPixelSize) {
+                    cgImage = std
+                } else {
+                    return nil
                 }
-                // Fall through to full decode if no usable preview
+            } else {
+                guard let std = loadThumbnailCGImage(path: path, maxPixelSize: maxPixelSize) else { return nil }
+                cgImage = std
             }
-
-            let url = URL(fileURLWithPath: path)
-            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
-
-            let options: [CFString: Any] = [
-                kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
-                kCGImageSourceCreateThumbnailFromImageAlways: true,
-                kCGImageSourceCreateThumbnailWithTransform: true
-            ]
-            guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
-                return nil
-            }
-
-            let result = thumbnailResultFromCGImage(cgImage, device: device)
-            CGImageSourceRemoveCacheAtIndex(source, 0)
-            return result
+            return thumbnailResultFromCGImage(cgImage, device: device)
         }
     }
 
-    /// Extract embedded JPEG preview from a RAW file and downsample to thumbnail size.
-    /// Avoids full sensor decode — typically completes in ~10ms vs 1-5s.
-    private static func generateRawThumbnailFromPreview(
-        path: String, device: MTLDevice, maxPixelSize: Int
-    ) -> ThumbnailResult? {
+    /// Standard image thumbnail: creates a downsampled CGImage using CreateThumbnailFromImageAlways.
+    private static func loadThumbnailCGImage(path: String, maxPixelSize: Int) -> CGImage? {
         let url = URL(fileURLWithPath: path)
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
 
-        // Do NOT set CreateThumbnailFromImageAlways — that forces full RAW decode
+        let options: [CFString: Any] = [
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true
+        ]
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
+            return nil
+        }
+        return cgImage
+    }
+
+    /// RAW preview thumbnail: extracts the embedded JPEG preview without forcing a full RAW decode.
+    /// Returns nil if no usable preview (>= 16px) is available.
+    private static func loadRawPreviewCGImage(
+        path: String, maxPixelSize: Int, minLongSide: Int = 16
+    ) -> CGImage? {
+        let url = URL(fileURLWithPath: path)
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+
         let options: [CFString: Any] = [
             kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
             kCGImageSourceCreateThumbnailWithTransform: true
         ]
         guard let preview = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary),
-              preview.width >= 16, preview.height >= 16
+              max(preview.width, preview.height) >= minLongSide
         else {
-            CGImageSourceRemoveCacheAtIndex(source, 0)
             return nil
         }
-
-        let result = thumbnailResultFromCGImage(preview, device: device)
-        CGImageSourceRemoveCacheAtIndex(source, 0)
-        return result
+        return preview
     }
 
     /// Shared helper: render a CGImage into a ThumbnailResult using a heap buffer
@@ -183,6 +184,44 @@ enum ImageLoader {
         guard let cacheData = compressCGImageToJPEG(cgImage, quality: 0.85) else { return nil }
 
         return ThumbnailResult(texture: texture, cacheData: cacheData, width: width, height: height, aspect: aspect)
+    }
+
+    // MARK: - Headless Thumbnail Generation (no Metal)
+
+    struct HeadlessThumbnailResult {
+        let cacheData: Data
+        let width: Int
+        let height: Int
+        let aspect: Float
+    }
+
+    static func generateThumbnailData(
+        path: String, maxPixelSize: Int
+    ) -> HeadlessThumbnailResult? {
+        return autoreleasepool { () -> HeadlessThumbnailResult? in
+            let cgImage: CGImage
+            if isRawFile(path) {
+                if let raw = loadRawPreviewCGImage(path: path, maxPixelSize: maxPixelSize) {
+                    cgImage = raw
+                } else if let std = loadThumbnailCGImage(path: path, maxPixelSize: maxPixelSize) {
+                    cgImage = std
+                } else {
+                    return nil
+                }
+            } else {
+                guard let std = loadThumbnailCGImage(path: path, maxPixelSize: maxPixelSize) else { return nil }
+                cgImage = std
+            }
+            return headlessResultFromCGImage(cgImage)
+        }
+    }
+
+    private static func headlessResultFromCGImage(_ cgImage: CGImage) -> HeadlessThumbnailResult? {
+        let width = cgImage.width
+        let height = cgImage.height
+        let aspect = Float(width) / Float(height)
+        guard let cacheData = compressCGImageToJPEG(cgImage, quality: 0.85) else { return nil }
+        return HeadlessThumbnailResult(cacheData: cacheData, width: width, height: height, aspect: aspect)
     }
 
     /// Compress a CGImage to JPEG data in memory for disk caching.
@@ -324,23 +363,9 @@ enum ImageLoader {
         from path: String, device: MTLDevice, maxPixelSize: Int, minLongSide: Int
     ) -> MTLTexture? {
         return autoreleasepool { () -> MTLTexture? in
-            let url = URL(fileURLWithPath: path)
-            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
-
-            // Extract embedded JPEG preview — do NOT set CreateThumbnailFromImageAlways
-            // which would force a full RAW decode
-            let options: [CFString: Any] = [
-                kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
-                kCGImageSourceCreateThumbnailWithTransform: true
-            ]
-            guard let preview = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
-                return nil
-            }
-            let longSide = max(preview.width, preview.height)
-            guard longSide >= minLongSide else {
-                CGImageSourceRemoveCacheAtIndex(source, 0)
-                return nil
-            }
+            guard let preview = loadRawPreviewCGImage(
+                path: path, maxPixelSize: maxPixelSize, minLongSide: minLongSide
+            ) else { return nil }
             MemoryProfiler.logEvent(
                 "loadPreview: \(preview.width)×\(preview.height) from \((path as NSString).lastPathComponent)",
                 device: device
@@ -349,9 +374,6 @@ enum ImageLoader {
             if let tex = texture {
                 MemoryProfiler.logTextureCreated("RAW preview", texture: tex, device: device)
             }
-
-            CGImageSourceRemoveCacheAtIndex(source, 0)
-
             return texture
         }
     }

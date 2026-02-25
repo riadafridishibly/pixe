@@ -49,6 +49,7 @@ struct Config {
     let extensionFilter: ExtensionFilter
     let excludedDirNames: Set<String>
     let excludedDirPaths: Set<String>
+    let warmCache: Bool
     let quiet: Bool
     let configFileLoaded: Bool
     let configFileFlags: [String]
@@ -120,6 +121,7 @@ struct Config {
         var maxHeight = 0
         var diskCacheEnabled = true
         var cleanThumbs = false
+        var warmCache = false
         var debugMemory = false
         var quiet = false
         var walkStrategy: DirectoryWalkStrategy = .auto
@@ -138,6 +140,8 @@ struct Config {
                 quiet = true
             case "--clean-thumbs":
                 cleanThumbs = true
+            case "--warm-cache":
+                warmCache = true
             case "--thumb-dir":
                 i += 1
                 if i < allArgs.count {
@@ -302,6 +306,7 @@ struct Config {
             extensionFilter: extensionFilter,
             excludedDirNames: excludedDirNames,
             excludedDirPaths: excludedDirPaths,
+            warmCache: warmCache,
             quiet: quiet,
             configFileLoaded: configFileLoaded,
             configFileFlags: configFileArgs,
@@ -400,6 +405,7 @@ struct Config {
           --exclude-dir <dirs> Skip directories by name or path (e.g. node_modules,~/Photos/Trash)
           --quiet              Suppress startup config message
           --clean-thumbs       Delete thumbnail cache and exit
+          --warm-cache         Pre-populate thumbnail/metadata cache headlessly and exit
           --debug-mem          Enable [mem] event logging to stderr
           -v, --version        Show version
           -h, --help           Show this help
