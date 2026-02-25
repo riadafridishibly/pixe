@@ -69,6 +69,10 @@ pixe [options] <image|directory> ...
 | `--thumb-dir <path>` | Thumbnail cache directory (default: `~/.cache/pixe/thumbs`) |
 | `--thumb-size <int>` | Max thumbnail size in pixels (default: 256) |
 | `--min-size <pixels>` | Skip images smaller than `<pixels>` on longest side |
+| `--min-width <px>` | Skip images narrower than `<px>` |
+| `--min-height <px>` | Skip images shorter than `<px>` |
+| `--max-width <px>` | Skip images wider than `<px>` |
+| `--max-height <px>` | Skip images taller than `<px>` |
 | `--no-cache` | Disable disk thumbnail cache |
 | `--walker <strategy>` | Traversal strategy: `auto`, `fd`, `readdir`, `foundation` |
 | `--sort <mode>` | Sort mode: `name`, `chrono`, `reverse-chrono` |
@@ -92,6 +96,8 @@ pixe *.jpg                     # View matching files
 pixe --include=jpg,png ~/mixed # Only JPG and PNG
 pixe --chrono ~/Pictures       # Oldest to newest by EXIF capture date
 pixe --reverse-chrono ~/Pictures # Newest to oldest by EXIF capture date
+pixe --min-width 1920 ~/Photos  # Only images at least 1920px wide
+pixe --max-height 1080 ~/Photos # Only images at most 1080px tall
 pixe --no-cache ~/project      # Skip disk cache
 ```
 

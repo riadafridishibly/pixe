@@ -37,6 +37,10 @@ struct Config {
     let thumbDir: String
     let thumbSize: Int
     let minSize: Int
+    let minWidth: Int
+    let minHeight: Int
+    let maxWidth: Int
+    let maxHeight: Int
     let diskCacheEnabled: Bool
     let cleanThumbs: Bool
     let debugMemory: Bool
@@ -56,6 +60,10 @@ struct Config {
         var thumbDir = defaultThumbDir
         var thumbSize = defaultThumbSize
         var minSize = 0
+        var minWidth = 0
+        var minHeight = 0
+        var maxWidth = 0
+        var maxHeight = 0
         var diskCacheEnabled = true
         var cleanThumbs = false
         var debugMemory = false
@@ -96,6 +104,26 @@ struct Config {
                 if i < args.count, let size = Int(args[i]), size >= 0 {
                     minSize = size
                 }
+            case let a where a.hasPrefix("--min-width="):
+                if let v = Int(String(a.dropFirst("--min-width=".count))), v >= 0 { minWidth = v }
+            case "--min-width":
+                i += 1
+                if i < args.count, let v = Int(args[i]), v >= 0 { minWidth = v }
+            case let a where a.hasPrefix("--min-height="):
+                if let v = Int(String(a.dropFirst("--min-height=".count))), v >= 0 { minHeight = v }
+            case "--min-height":
+                i += 1
+                if i < args.count, let v = Int(args[i]), v >= 0 { minHeight = v }
+            case let a where a.hasPrefix("--max-width="):
+                if let v = Int(String(a.dropFirst("--max-width=".count))), v > 0 { maxWidth = v }
+            case "--max-width":
+                i += 1
+                if i < args.count, let v = Int(args[i]), v > 0 { maxWidth = v }
+            case let a where a.hasPrefix("--max-height="):
+                if let v = Int(String(a.dropFirst("--max-height=".count))), v > 0 { maxHeight = v }
+            case "--max-height":
+                i += 1
+                if i < args.count, let v = Int(args[i]), v > 0 { maxHeight = v }
             case "--no-cache":
                 diskCacheEnabled = false
             case "--debug-mem":
@@ -179,6 +207,10 @@ struct Config {
             thumbDir: thumbDir,
             thumbSize: thumbSize,
             minSize: minSize,
+            minWidth: minWidth,
+            minHeight: minHeight,
+            maxWidth: maxWidth,
+            maxHeight: maxHeight,
             diskCacheEnabled: diskCacheEnabled,
             cleanThumbs: cleanThumbs,
             debugMemory: debugMemory,
@@ -223,7 +255,11 @@ struct Config {
         Options:
           --thumb-dir <path>   Thumbnail cache directory (default: ~/.cache/pixe/thumbs)
           --thumb-size <int>   Max thumbnail pixel size (default: 256)
-          --min-size <pixels>  Skip images smaller than <pixels> on longest side (default: 0)
+          --min-size <pixels>  Skip images smaller than <pixels> on longest side
+          --min-width <px>     Skip images narrower than <px>
+          --min-height <px>    Skip images shorter than <px>
+          --max-width <px>     Skip images wider than <px>
+          --max-height <px>    Skip images taller than <px>
           --no-cache           Disable disk thumbnail cache
           --walker <strategy>  Traversal strategy: auto|fd|readdir|foundation (default: auto)
           --sort <mode>        Sort mode: name|chrono|reverse-chrono (default: name)

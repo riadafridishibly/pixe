@@ -11,6 +11,10 @@ class ImageList {
     private(set) var currentIndex: Int = 0
     private let sortMode: SortMode
     private let minSize: Int
+    private let minWidth: Int
+    private let minHeight: Int
+    private let maxWidth: Int
+    private let maxHeight: Int
     private let sortQueue = DispatchQueue(label: "pixe.sort", qos: .userInitiated)
     private var sortGeneration: Int = 0
 
@@ -30,6 +34,10 @@ class ImageList {
     // Callbacks for incremental updates
     var onBatchAdded: ((Int) -> Void)?
     var onEnumerationComplete: ((Int) -> Void)?
+
+    private var hasSizeFilter: Bool {
+        minSize > 0 || minWidth > 0 || minHeight > 0 || maxWidth > 0 || maxHeight > 0
+    }
 
     var count: Int {
         paths.count
@@ -51,6 +59,10 @@ class ImageList {
     init(arguments: [String], config: Config) {
         sortMode = config.sortMode
         minSize = config.minSize
+        minWidth = config.minWidth
+        minHeight = config.minHeight
+        maxWidth = config.maxWidth
+        maxHeight = config.maxHeight
         metadataStore = config.diskCacheEnabled ? MetadataStore(directory: config.thumbDir) : nil
         let fileManager = FileManager.default
 
@@ -74,16 +86,20 @@ class ImageList {
                 if let cached = metadataStore?.cachedDirectoryEntries(
                     dirPath: path,
                     filter: config.extensionFilter,
-                    minSize: config.minSize
+                    minSize: config.minSize,
+                    minWidth: config.minWidth,
+                    minHeight: config.minHeight,
+                    maxWidth: config.maxWidth,
+                    maxHeight: config.maxHeight
                 ) {
-                    for cachedPath in cached where !deletedPaths.contains(cachedPath) && meetsMinSize(cachedPath) {
+                    for cachedPath in cached where !deletedPaths.contains(cachedPath) && meetsSizeFilter(cachedPath) {
                         if knownPaths.insert(cachedPath).inserted {
                             paths.append(cachedPath)
                         }
                     }
                 }
             } else {
-                if ImageLoader.isImageFile(path) && config.extensionFilter.accepts(path) && meetsMinSize(path) {
+                if ImageLoader.isImageFile(path) && config.extensionFilter.accepts(path) && meetsSizeFilter(path) {
                     if knownPaths.insert(path).inserted {
                         paths.append(path)
                         explicitFilePaths.insert(path)
@@ -178,10 +194,10 @@ class ImageList {
             foundCount += batch.count
             discoveredPaths.append(contentsOf: batch)
 
-            // Filter by min-size on background thread (not main)
+            // Filter by size constraints on background thread (not main)
             let sizeFiltered: [String]
-            if let self = self, self.minSize > 0 {
-                sizeFiltered = batch.filter { self.meetsMinSize($0) }
+            if let self = self, self.hasSizeFilter {
+                sizeFiltered = batch.filter { self.meetsSizeFilter($0) }
             } else {
                 sizeFiltered = batch
             }
@@ -495,16 +511,25 @@ class ImageList {
         ]
     }()
 
-    private func meetsMinSize(_ path: String) -> Bool {
-        guard minSize > 0 else { return true }
+    private func meetsSizeFilter(_ path: String) -> Bool {
+        guard hasSizeFilter else { return true }
         // Fast path: check cached dimensions from SQLite
-        if let cached = metadataStore?.cachedLongestSide(path: path) {
-            return cached >= minSize
+        if let dims = metadataStore?.cachedDimensions(path: path) {
+            return checkDimensions(width: dims.width, height: dims.height)
         }
         // Slow path: read from file headers, then persist for next time
         guard let dims = ImageLoader.imageDimensions(path: path) else { return true }
         metadataStore?.upsertDimensions(path: path, width: dims.width, height: dims.height)
-        return max(dims.width, dims.height) >= minSize
+        return checkDimensions(width: dims.width, height: dims.height)
+    }
+
+    private func checkDimensions(width: Int, height: Int) -> Bool {
+        if minSize > 0 && max(width, height) < minSize { return false }
+        if minWidth > 0 && width < minWidth { return false }
+        if minHeight > 0 && height < minHeight { return false }
+        if maxWidth > 0 && width > maxWidth { return false }
+        if maxHeight > 0 && height > maxHeight { return false }
+        return true
     }
 
     private func elapsedMs(since start: DispatchTime) -> Double {

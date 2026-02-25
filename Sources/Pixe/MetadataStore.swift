@@ -248,10 +248,19 @@ final class MetadataStore {
         }
     }
 
-    func cachedDirectoryEntries(dirPath: String, filter: ExtensionFilter, minSize: Int = 0) -> [String] {
+    func cachedDirectoryEntries(
+        dirPath: String,
+        filter: ExtensionFilter,
+        minSize: Int = 0,
+        minWidth: Int = 0,
+        minHeight: Int = 0,
+        maxWidth: Int = 0,
+        maxHeight: Int = 0
+    ) -> [String] {
         queue.sync {
+            let hasSizeFilter = minSize > 0 || minWidth > 0 || minHeight > 0 || maxWidth > 0 || maxHeight > 0
             let sql: String
-            if minSize > 0 {
+            if hasSizeFilter {
                 // JOIN with image_meta to filter by cached dimensions.
                 // Paths without cached dimensions (NULL) are included and will be
                 // checked on the fly, then persisted for next time.
@@ -261,7 +270,13 @@ final class MetadataStore {
                 LEFT JOIN image_meta im ON de.path = im.path
                 WHERE de.dir_path = ?1
                   AND (im.pixel_width IS NULL
-                       OR max(im.pixel_width, im.pixel_height) >= ?2);
+                       OR (
+                           (?2 = 0 OR max(im.pixel_width, im.pixel_height) >= ?2)
+                           AND (?3 = 0 OR im.pixel_width >= ?3)
+                           AND (?4 = 0 OR im.pixel_height >= ?4)
+                           AND (?5 = 0 OR im.pixel_width <= ?5)
+                           AND (?6 = 0 OR im.pixel_height <= ?6)
+                       ));
                 """
             } else {
                 sql = """
@@ -277,8 +292,12 @@ final class MetadataStore {
             defer { sqlite3_finalize(stmt) }
 
             sqlite3_bind_text(stmt, 1, dirPath, -1, sqliteTransient)
-            if minSize > 0 {
+            if hasSizeFilter {
                 sqlite3_bind_int(stmt, 2, Int32(minSize))
+                sqlite3_bind_int(stmt, 3, Int32(minWidth))
+                sqlite3_bind_int(stmt, 4, Int32(minHeight))
+                sqlite3_bind_int(stmt, 5, Int32(maxWidth))
+                sqlite3_bind_int(stmt, 6, Int32(maxHeight))
             }
             var paths: [String] = []
             while sqlite3_step(stmt) == SQLITE_ROW {
@@ -291,7 +310,7 @@ final class MetadataStore {
         }
     }
 
-    func cachedLongestSide(path: String) -> Int? {
+    func cachedDimensions(path: String) -> (width: Int, height: Int)? {
         queue.sync {
             let sql = """
             SELECT pixel_width, pixel_height
@@ -310,7 +329,7 @@ final class MetadataStore {
 
             let w = Int(sqlite3_column_int(stmt, 0))
             let h = Int(sqlite3_column_int(stmt, 1))
-            return max(w, h)
+            return (width: w, height: h)
         }
     }
 
