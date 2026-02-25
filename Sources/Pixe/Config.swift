@@ -47,6 +47,8 @@ struct Config {
     let walkStrategy: DirectoryWalkStrategy
     let sortMode: SortMode
     let extensionFilter: ExtensionFilter
+    let excludedDirNames: Set<String>
+    let excludedDirPaths: Set<String>
     let imageArguments: [String]
 
     static let defaultThumbDir: String = {
@@ -72,6 +74,8 @@ struct Config {
         var imageArguments: [String] = []
         var includeExts: Set<String>?
         var excludeExts: Set<String>?
+        var excludedDirNames: Set<String> = []
+        var excludedDirPaths: Set<String> = []
 
         var i = 0
         while i < args.count {
@@ -180,6 +184,14 @@ struct Config {
             case "--exclude":
                 i += 1
                 if i < args.count { excludeExts = parseExtensions(args[i]) }
+            case let a where a.hasPrefix("--exclude-dir="):
+                let value = String(a.dropFirst("--exclude-dir=".count))
+                parseDirExclusions(value, names: &excludedDirNames, paths: &excludedDirPaths)
+            case "--exclude-dir":
+                i += 1
+                if i < args.count {
+                    parseDirExclusions(args[i], names: &excludedDirNames, paths: &excludedDirPaths)
+                }
             case "--version", "-v":
                 printVersion()
                 exit(0)
@@ -217,6 +229,8 @@ struct Config {
             walkStrategy: walkStrategy,
             sortMode: sortMode,
             extensionFilter: extensionFilter,
+            excludedDirNames: excludedDirNames,
+            excludedDirPaths: excludedDirPaths,
             imageArguments: imageArguments
         )
     }
@@ -244,6 +258,39 @@ struct Config {
             .filter { !$0.isEmpty })
     }
 
+    private static func parseDirExclusions(_ value: String, names: inout Set<String>, paths: inout Set<String>) {
+        for item in value.split(separator: ",") {
+            let trimmed = item.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty else { continue }
+            if trimmed.contains("/") || trimmed.hasPrefix("~") {
+                let expanded = (trimmed as NSString).expandingTildeInPath
+                let normalized = expanded.hasSuffix("/") && expanded != "/"
+                    ? String(expanded.dropLast()) : expanded
+                paths.insert(normalized)
+            } else {
+                names.insert(trimmed)
+            }
+        }
+    }
+
+    func isPathExcludedByDir(_ path: String) -> Bool {
+        if !excludedDirNames.isEmpty {
+            let components = (path as NSString).pathComponents
+            if components.contains(where: { excludedDirNames.contains($0) }) {
+                return true
+            }
+        }
+        if !excludedDirPaths.isEmpty {
+            for excluded in excludedDirPaths {
+                let prefix = excluded.hasSuffix("/") ? excluded : excluded + "/"
+                if path.hasPrefix(prefix) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
     private static func printVersion() {
         fputs("pixe \(BuildInfo.version) (\(BuildInfo.commit))\n", stderr)
     }
@@ -267,6 +314,7 @@ struct Config {
           --reverse-chrono     Shortcut for --sort reverse-chrono
           --include <exts>     Only show these extensions (e.g. --include=.jpg,.png)
           --exclude <exts>     Hide these extensions (e.g. --exclude=.svg,.pdf)
+          --exclude-dir <dirs> Skip directories by name or path (e.g. node_modules,~/Photos/Trash)
           --clean-thumbs       Delete thumbnail cache and exit
           --debug-mem          Enable [mem] event logging to stderr
           -v, --version        Show version

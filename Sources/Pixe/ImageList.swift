@@ -92,7 +92,9 @@ class ImageList {
                     maxWidth: config.maxWidth,
                     maxHeight: config.maxHeight
                 ) {
-                    for cachedPath in cached where !deletedPaths.contains(cachedPath) && meetsSizeFilter(cachedPath) {
+                    for cachedPath in cached where !deletedPaths.contains(cachedPath)
+                        && !config.isPathExcludedByDir(cachedPath)
+                        && meetsSizeFilter(cachedPath) {
                         if knownPaths.insert(cachedPath).inserted {
                             paths.append(cachedPath)
                         }
