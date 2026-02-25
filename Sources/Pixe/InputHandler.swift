@@ -108,11 +108,16 @@ class InputHandler {
             renderer.updateInfoBar()
             view.needsDisplay = true
 
+        case "y":
+            renderer.copyCurrentImage()
+
         default:
             if event.characters == "G" {
                 renderer.gridLayout.goToLast()
                 renderer.updateInfoBar()
                 view.needsDisplay = true
+            } else if event.characters == "Y" {
+                renderer.copyCurrentImagePath()
             } else {
                 handleThumbnailArrowKeys(keyCode: event.keyCode, view: view)
             }
@@ -346,10 +351,15 @@ class InputHandler {
             renderer.imageList.goFirst()
             renderer.loadCurrentImage()
 
+        case "y":
+            renderer.copyCurrentImage()
+
         default:
             if event.characters == "G" {
                 renderer.imageList.goLast()
                 renderer.loadCurrentImage()
+            } else if event.characters == "Y" {
+                renderer.copyCurrentImagePath()
             } else {
                 handleImageArrowKeys(keyCode: event.keyCode, view: view)
             }
