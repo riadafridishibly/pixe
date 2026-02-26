@@ -29,6 +29,7 @@ class Renderer: NSObject, MTKViewDelegate {
     var vertexBuffer: MTLBuffer!
 
     var currentTexture: MTLTexture?
+    var gifAnimator: GIFAnimator?
     let imageList: ImageList
     let config: Config
     weak var window: ImageWindow?
@@ -252,6 +253,8 @@ class Renderer: NSObject, MTKViewDelegate {
     func loadCurrentImage() {
         guard let path = imageList.currentPath else { return }
         currentLoadTask?.cancel()
+        gifAnimator?.stop()
+        gifAnimator = nil
         // Immediately clean up prefetchLoading for the cancelled task's path
         // so stale entries don't cause the next load to early-return.
         if let oldPath = currentLoadPath {
@@ -272,6 +275,7 @@ class Renderer: NSObject, MTKViewDelegate {
             if let view = window?.contentView as? MTKView { view.needsDisplay = true }
             if cached.quality == .full {
                 prefetchAdjacentImages()
+                loadGIFAnimatorIfNeeded(path: path)
                 return
             }
         }
@@ -330,10 +334,32 @@ class Renderer: NSObject, MTKViewDelegate {
                 self.updateWindowTitle()
                 self.prefetchAdjacentImages()
                 if let view = self.window?.contentView as? MTKView { view.needsDisplay = true }
+                self.loadGIFAnimatorIfNeeded(path: path)
             }
         }
         currentLoadTask = task
         displayDecodeQueue.async(execute: task)
+    }
+
+    private func loadGIFAnimatorIfNeeded(path: String) {
+        guard GIFLoader.isGIF(path) else { return }
+        let device = self.device
+        let maxPx = self.maxDisplayPixelSize
+        displayDecodeQueue.async { [weak self] in
+            let animator = GIFLoader.loadAnimatedGIF(from: path, device: device, maxPixelSize: maxPx)
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self,
+                      self.mode == .image,
+                      self.imageList.currentPath == path else { return }
+                if let animator = animator {
+                    self.gifAnimator = animator
+                    self.imageAspect = animator.aspect
+                    if let view = self.window?.contentView as? MTKView {
+                        animator.start(view: view)
+                    }
+                }
+            }
+        }
     }
 
     private func currentAndAdjacentPaths() -> Set<String> {
@@ -746,6 +772,8 @@ class Renderer: NSObject, MTKViewDelegate {
         mode = .thumbnail
         gridLayout.selectedIndex = imageList.currentIndex
         currentTexture = nil
+        gifAnimator?.stop()
+        gifAnimator = nil
         currentLoadTask?.cancel()
         loadGeneration += 1
         prefetchGeneration += 1
@@ -808,7 +836,7 @@ class Renderer: NSObject, MTKViewDelegate {
     // MARK: - Image Drawing
 
     private func drawImage(in view: MTKView) {
-        guard let texture = currentTexture,
+        guard let texture = gifAnimator?.currentTexture ?? currentTexture,
               let drawable = view.currentDrawable,
               let descriptor = view.currentRenderPassDescriptor else { return }
 

@@ -298,7 +298,7 @@ enum ImageLoader {
     /// Decodes into a temporary heap buffer (freed immediately via defer),
     /// then copies to a shared texture via replace(). No Metal staging buffer
     /// or blit command — eliminates the RSS growth from lingering Metal buffers.
-    private static func createSharedTexture(
+    static func createSharedTexture(
         from cgImage: CGImage, device: MTLDevice
     ) -> MTLTexture? {
         let width = cgImage.width
