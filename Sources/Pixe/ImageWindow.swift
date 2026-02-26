@@ -96,9 +96,9 @@ class ImageWindow: NSWindow {
             infoPanelLabel.leadingAnchor.constraint(equalTo: infoPanel.leadingAnchor, constant: 12),
             infoPanelLabel.trailingAnchor.constraint(equalTo: infoPanel.trailingAnchor, constant: -12),
 
-            infoPanel.trailingAnchor.constraint(equalTo: cv.trailingAnchor, constant: -12),
-            infoPanel.centerYAnchor.constraint(equalTo: cv.centerYAnchor),
-            infoPanel.widthAnchor.constraint(equalToConstant: 300)
+            infoPanel.centerXAnchor.constraint(equalTo: cv.centerXAnchor),
+            infoPanel.bottomAnchor.constraint(equalTo: cv.bottomAnchor, constant: -36),
+            infoPanel.widthAnchor.constraint(equalToConstant: 380)
         ])
     }
 

@@ -481,21 +481,55 @@ enum ImageLoader {
             result.append(("ISO", "\(iso)"))
         }
 
-        if let date = exif[kCGImagePropertyExifDateTimeOriginal] as? String {
-            result.append(("Date", date))
+        if let dateStr = exif[kCGImagePropertyExifDateTimeOriginal] as? String {
+            if let parsed = parseExifDateForDisplay(dateStr) {
+                result.append(("Date", formatDate(parsed)))
+            } else {
+                result.append(("Date", dateStr))
+            }
         }
 
         return result
     }
 
-    private static let dateFormatter: DateFormatter = {
+    private static let displayDateFormatter: DateFormatter = {
         let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        f.dateFormat = "dd MMM yyyy, hh:mm:ss a"
+        f.locale = Locale(identifier: "en_US_POSIX")
         return f
     }()
 
+    private static let exifParsers: [DateFormatter] = {
+        func make(_ fmt: String) -> DateFormatter {
+            let f = DateFormatter()
+            f.dateFormat = fmt
+            f.locale = Locale(identifier: "en_US_POSIX")
+            return f
+        }
+        return [
+            make("yyyy:MM:dd HH:mm:ss"),
+            make("yyyy:MM:dd HH:mm:ssZ"),
+            make("yyyy:MM:dd HH:mm:ssXXXXX"),
+            make("yyyy-MM-dd HH:mm:ss"),
+            make("yyyy-MM-dd'T'HH:mm:ss"),
+            make("yyyy-MM-dd'T'HH:mm:ssZ"),
+            make("yyyy-MM-dd'T'HH:mm:ssXXXXX"),
+        ]
+    }()
+
+    private static func parseExifDateForDisplay(_ raw: String) -> Date? {
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+        for parser in exifParsers {
+            if let date = parser.date(from: text) {
+                return date
+            }
+        }
+        return nil
+    }
+
     private static func formatDate(_ date: Date) -> String {
-        dateFormatter.string(from: date)
+        displayDateFormatter.string(from: date)
     }
 
     private static func formatFileSize(_ bytes: UInt64) -> String {
