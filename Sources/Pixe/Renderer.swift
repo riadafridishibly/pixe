@@ -29,6 +29,9 @@ class Renderer: NSObject, MTKViewDelegate {
     var vertexBuffer: MTLBuffer!
 
     var currentTexture: MTLTexture?
+    var gifAnimator: GIFAnimator?
+    private var thumbnailGIFAnimator: GIFAnimator?
+    private var thumbnailGIFPath: String?
     let imageList: ImageList
     let config: Config
     weak var window: ImageWindow?
@@ -136,6 +139,9 @@ class Renderer: NSObject, MTKViewDelegate {
                 return
             }
             // Sort changed indices — invalidate thumbnail cache
+            self.thumbnailGIFAnimator?.stop()
+            self.thumbnailGIFAnimator = nil
+            self.thumbnailGIFPath = nil
             self.thumbnailCache?.invalidateAll()
             self.gridLayout.totalItems = self.imageList.count
             self.gridLayout.clampScroll()
@@ -252,6 +258,8 @@ class Renderer: NSObject, MTKViewDelegate {
     func loadCurrentImage() {
         guard let path = imageList.currentPath else { return }
         currentLoadTask?.cancel()
+        gifAnimator?.stop()
+        gifAnimator = nil
         // Immediately clean up prefetchLoading for the cancelled task's path
         // so stale entries don't cause the next load to early-return.
         if let oldPath = currentLoadPath {
@@ -272,6 +280,7 @@ class Renderer: NSObject, MTKViewDelegate {
             if let view = window?.contentView as? MTKView { view.needsDisplay = true }
             if cached.quality == .full {
                 prefetchAdjacentImages()
+                loadGIFAnimatorIfNeeded(path: path)
                 return
             }
         }
@@ -330,10 +339,67 @@ class Renderer: NSObject, MTKViewDelegate {
                 self.updateWindowTitle()
                 self.prefetchAdjacentImages()
                 if let view = self.window?.contentView as? MTKView { view.needsDisplay = true }
+                self.loadGIFAnimatorIfNeeded(path: path)
             }
         }
         currentLoadTask = task
         displayDecodeQueue.async(execute: task)
+    }
+
+    private func loadGIFAnimatorIfNeeded(path: String) {
+        guard GIFLoader.isGIF(path) else { return }
+        let device = self.device
+        let maxPx = self.maxDisplayPixelSize
+        displayDecodeQueue.async { [weak self] in
+            let animator = GIFLoader.loadAnimatedGIF(from: path, device: device, maxPixelSize: maxPx)
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self,
+                      self.mode == .image,
+                      self.imageList.currentPath == path else { return }
+                if let animator = animator {
+                    self.gifAnimator = animator
+                    self.imageAspect = animator.aspect
+                    if let view = self.window?.contentView as? MTKView {
+                        animator.start(view: view)
+                    }
+                }
+            }
+        }
+    }
+
+    private func updateThumbnailGIFIfNeeded() {
+        guard mode == .thumbnail else { return }
+        let index = gridLayout.selectedIndex
+        guard index < imageList.allPaths.count else { return }
+        let path = imageList.allPaths[index]
+
+        // Already animating this path
+        if path == thumbnailGIFPath { return }
+
+        // Stop previous animator
+        thumbnailGIFAnimator?.stop()
+        thumbnailGIFAnimator = nil
+        thumbnailGIFPath = nil
+
+        guard GIFLoader.isGIF(path) else { return }
+        thumbnailGIFPath = path
+
+        let device = self.device
+        let maxPx = thumbnailCache?.maxPixelSize ?? 256
+        displayDecodeQueue.async { [weak self] in
+            let animator = GIFLoader.loadAnimatedGIF(from: path, device: device, maxPixelSize: maxPx)
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self,
+                      self.mode == .thumbnail,
+                      self.thumbnailGIFPath == path else { return }
+                if let animator = animator {
+                    self.thumbnailGIFAnimator = animator
+                    if let view = self.window?.contentView as? MTKView {
+                        animator.start(view: view)
+                    }
+                }
+            }
+        }
     }
 
     private func currentAndAdjacentPaths() -> Set<String> {
@@ -572,6 +638,7 @@ class Renderer: NSObject, MTKViewDelegate {
             text += " \u{2014} [\(imageList.currentIndex + 1)/\(imageList.count)]"
             window?.updateInfo(text)
         }
+        updateThumbnailGIFIfNeeded()
     }
 
     func setThumbnailSearchQuery(_ query: String?) {
@@ -733,6 +800,9 @@ class Renderer: NSObject, MTKViewDelegate {
     // MARK: - Mode Switching
 
     func enterImageMode(at index: Int) {
+        thumbnailGIFAnimator?.stop()
+        thumbnailGIFAnimator = nil
+        thumbnailGIFPath = nil
         imageList.goTo(index: index)
         mode = .image
         // Pre-set thumbnail as placeholder to avoid black flash
@@ -746,6 +816,11 @@ class Renderer: NSObject, MTKViewDelegate {
         mode = .thumbnail
         gridLayout.selectedIndex = imageList.currentIndex
         currentTexture = nil
+        gifAnimator?.stop()
+        gifAnimator = nil
+        thumbnailGIFAnimator?.stop()
+        thumbnailGIFAnimator = nil
+        thumbnailGIFPath = nil
         currentLoadTask?.cancel()
         loadGeneration += 1
         prefetchGeneration += 1
@@ -808,7 +883,7 @@ class Renderer: NSObject, MTKViewDelegate {
     // MARK: - Image Drawing
 
     private func drawImage(in view: MTKView) {
-        guard let texture = currentTexture,
+        guard let texture = gifAnimator?.currentTexture ?? currentTexture,
               let drawable = view.currentDrawable,
               let descriptor = view.currentRenderPassDescriptor else { return }
 
@@ -882,7 +957,13 @@ class Renderer: NSObject, MTKViewDelegate {
         // Gather visible items that have textures
         var visibleItems: [(index: Int, texture: MTLTexture)] = []
         for i in visible {
-            guard let texture = cache.texture(at: i) else { continue }
+            let texture: MTLTexture
+            if i == gridLayout.selectedIndex, let animTex = thumbnailGIFAnimator?.currentTexture {
+                texture = animTex
+            } else {
+                guard let t = cache.texture(at: i) else { continue }
+                texture = t
+            }
             visibleItems.append((i, texture))
         }
 
