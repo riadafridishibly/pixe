@@ -75,9 +75,11 @@ pixe [options] <image|directory> ...
 | `--max-height <px>` | Skip images taller than `<px>` |
 | `--no-cache` | Disable disk thumbnail cache |
 | `--walker <strategy>` | Traversal strategy: `auto`, `fd`, `readdir`, `foundation` |
-| `--sort <mode>` | Sort mode: `name`, `chrono`, `reverse-chrono` |
+| `--sort <mode>` | Sort mode: `name`, `chrono`, `reverse-chrono`, `mtime`, `reverse-mtime` |
 | `--chrono` | Shortcut for `--sort chrono` |
 | `--reverse-chrono` | Shortcut for `--sort reverse-chrono` |
+| `--mtime` | Shortcut for `--sort mtime` |
+| `--reverse-mtime` | Shortcut for `--sort reverse-mtime` |
 | `--include <exts>` | Only show these extensions (e.g. `jpg,png`) |
 | `--exclude <exts>` | Hide these extensions (last one wins if both `--include` and `--exclude` are set) |
 | `--exclude-dir <dirs>` | Skip directories by name or path (e.g. `node_modules,~/Photos/Trash`) |
@@ -115,6 +117,8 @@ pixe *.jpg                     # View matching files
 pixe --include=jpg,png ~/mixed # Only JPG and PNG
 pixe --chrono ~/Pictures       # Oldest to newest by EXIF capture date
 pixe --reverse-chrono ~/Pictures # Newest to oldest by EXIF capture date
+pixe --mtime ~/Pictures        # Oldest to newest by file modification time
+pixe --reverse-mtime ~/Pictures # Newest to oldest by file modification time
 pixe --min-width 1920 ~/Photos  # Only images at least 1920px wide
 pixe --max-height 1080 ~/Photos # Only images at most 1080px tall
 pixe --exclude-dir=node_modules ~/project # Skip node_modules directories

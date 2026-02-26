@@ -546,7 +546,6 @@ class Renderer: NSObject, MTKViewDelegate {
             }
             let index = gridLayout.selectedIndex
             let path = imageList.allPaths[min(index, imageList.allPaths.count - 1)]
-            let dir = shortenPath((path as NSString).deletingLastPathComponent)
             let suffix: String
             if isScanning {
                 suffix = " scanning..."
@@ -559,7 +558,9 @@ class Renderer: NSObject, MTKViewDelegate {
             if let query = thumbnailSearchQuery {
                 text = query.isEmpty ? "/" : "/\(query)"
             } else {
-                text = "\(dir) \u{2014} \(imageList.count) images\(suffix)"
+                let totalWidth = String(imageList.count).count
+                let padded = String(repeating: " ", count: totalWidth - String(index + 1).count) + "\(index + 1)"
+                text = "[\(padded)/\(imageList.count)]\(suffix) \(shortenPath(path))"
             }
             window?.updateInfo(text)
         case .image:

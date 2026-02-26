@@ -316,6 +316,10 @@ class ImageList {
             sortByExifDate(paths: &sorted, reverse: false)
         case .reverseChrono:
             sortByExifDate(paths: &sorted, reverse: true)
+        case .mtime:
+            sortByMtime(paths: &sorted, reverse: false)
+        case .reverseMtime:
+            sortByMtime(paths: &sorted, reverse: true)
         }
         return sorted
     }
@@ -372,11 +376,69 @@ class ImageList {
         }
     }
 
+    private func sortByMtime(paths: inout [String], reverse: Bool) {
+        var mtimeByPath: [String: Double] = [:]
+        mtimeByPath.reserveCapacity(paths.count)
+        for path in paths where mtimeByPath[path] == nil {
+            mtimeByPath[path] = fileSignature(for: path)?.mtime
+        }
+
+        paths.sort { lhs, rhs in
+            let lhsMtime = mtimeByPath[lhs]
+            let rhsMtime = mtimeByPath[rhs]
+
+            switch (lhsMtime, rhsMtime) {
+            case let (lhs?, rhs?):
+                if lhs != rhs {
+                    return reverse ? lhs > rhs : lhs < rhs
+                }
+            case (.some, .none):
+                return true
+            case (.none, .some):
+                return false
+            case (.none, .none):
+                break
+            }
+
+            return lhs.localizedStandardCompare(rhs) == .orderedAscending
+        }
+    }
+
     private func sortPathsWithCachedMetadata(_ input: [String], mode: SortMode) -> [String] {
         guard mode.requiresExplicitSort else {
             return input.sorted()
         }
+
         var sorted = input
+
+        if mode == .mtime || mode == .reverseMtime {
+            var cachedMtimeByPath: [String: Double] = [:]
+            cachedMtimeByPath.reserveCapacity(sorted.count)
+            for path in sorted where cachedMtimeByPath[path] == nil {
+                cachedMtimeByPath[path] = metadataStore?.cachedMtimeWithoutSignature(path: path)
+            }
+            let reverse = mode == .reverseMtime
+            sorted.sort { lhs, rhs in
+                let lhsMtime = cachedMtimeByPath[lhs]
+                let rhsMtime = cachedMtimeByPath[rhs]
+
+                switch (lhsMtime, rhsMtime) {
+                case let (lhs?, rhs?):
+                    if lhs != rhs {
+                        return reverse ? lhs > rhs : lhs < rhs
+                    }
+                case (.some, .none):
+                    return true
+                case (.none, .some):
+                    return false
+                case (.none, .none):
+                    break
+                }
+                return lhs.localizedStandardCompare(rhs) == .orderedAscending
+            }
+            return sorted
+        }
+
         var cachedByPath: [String: ExifMetadataValue] = [:]
         cachedByPath.reserveCapacity(sorted.count)
         for path in sorted where cachedByPath[path] == nil {

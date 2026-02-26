@@ -74,11 +74,12 @@ class ImageWindow: NSWindow {
         infoPanel.state = .active
         infoPanel.wantsLayer = true
         infoPanel.layer?.cornerRadius = 8
+        infoPanel.layer?.backgroundColor = NSColor(white: 0.0, alpha: 0.6).cgColor
         infoPanel.isHidden = true
 
         infoPanelLabel = NSTextField(wrappingLabelWithString: "")
-        infoPanelLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-        infoPanelLabel.textColor = NSColor(white: 0.85, alpha: 1.0)
+        infoPanelLabel.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
+        infoPanelLabel.textColor = NSColor(white: 0.9, alpha: 1.0)
         infoPanelLabel.isSelectable = false
         infoPanelLabel.drawsBackground = false
         infoPanelLabel.isBezeled = false
@@ -95,9 +96,9 @@ class ImageWindow: NSWindow {
             infoPanelLabel.leadingAnchor.constraint(equalTo: infoPanel.leadingAnchor, constant: 12),
             infoPanelLabel.trailingAnchor.constraint(equalTo: infoPanel.trailingAnchor, constant: -12),
 
-            infoPanel.trailingAnchor.constraint(equalTo: cv.trailingAnchor, constant: -12),
-            infoPanel.centerYAnchor.constraint(equalTo: cv.centerYAnchor),
-            infoPanel.widthAnchor.constraint(equalToConstant: 300)
+            infoPanel.centerXAnchor.constraint(equalTo: cv.centerXAnchor),
+            infoPanel.bottomAnchor.constraint(equalTo: cv.bottomAnchor, constant: -36),
+            infoPanel.widthAnchor.constraint(equalToConstant: 380)
         ])
     }
 

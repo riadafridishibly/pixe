@@ -27,6 +27,8 @@ enum SortMode: String {
     case name
     case chrono
     case reverseChrono = "reverse-chrono"
+    case mtime
+    case reverseMtime = "reverse-mtime"
 
     var requiresExplicitSort: Bool {
         self != .name
@@ -213,7 +215,7 @@ struct Config {
             case let a where a.hasPrefix("--sort="):
                 let value = String(a.dropFirst("--sort=".count)).lowercased()
                 guard let parsed = SortMode(rawValue: value) else {
-                    fputs("pixe: invalid --sort value '\(value)' (expected: name|chrono|reverse-chrono)\n", stderr)
+                    fputs("pixe: invalid --sort value '\(value)' (expected: name|chrono|reverse-chrono|mtime|reverse-mtime)\n", stderr)
                     exit(1)
                 }
                 sortMode = parsed
@@ -225,7 +227,7 @@ struct Config {
                 }
                 let value = allArgs[i].lowercased()
                 guard let parsed = SortMode(rawValue: value) else {
-                    fputs("pixe: invalid --sort value '\(value)' (expected: name|chrono|reverse-chrono)\n", stderr)
+                    fputs("pixe: invalid --sort value '\(value)' (expected: name|chrono|reverse-chrono|mtime|reverse-mtime)\n", stderr)
                     exit(1)
                 }
                 sortMode = parsed
@@ -233,6 +235,10 @@ struct Config {
                 sortMode = .chrono
             case "--reverse-chrono":
                 sortMode = .reverseChrono
+            case "--mtime":
+                sortMode = .mtime
+            case "--reverse-mtime":
+                sortMode = .reverseMtime
             case let a where a.hasPrefix("--include="):
                 if excludeExts != nil {
                     fputs("pixe: --include overrides previous --exclude\n", stderr)
@@ -397,9 +403,11 @@ struct Config {
           --max-height <px>    Skip images taller than <px>
           --no-cache           Disable disk thumbnail cache
           --walker <strategy>  Traversal strategy: auto|fd|readdir|foundation (default: auto)
-          --sort <mode>        Sort mode: name|chrono|reverse-chrono (default: name)
+          --sort <mode>        Sort mode: name|chrono|reverse-chrono|mtime|reverse-mtime (default: name)
           --chrono             Shortcut for --sort chrono
           --reverse-chrono     Shortcut for --sort reverse-chrono
+          --mtime              Shortcut for --sort mtime
+          --reverse-mtime      Shortcut for --sort reverse-mtime
           --include <exts>     Only show these extensions (e.g. --include=.jpg,.png)
           --exclude <exts>     Hide these extensions (e.g. --exclude=.svg,.pdf)
           --exclude-dir <dirs> Skip directories by name or path (e.g. node_modules,~/Photos/Trash)
