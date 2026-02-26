@@ -386,11 +386,14 @@ enum ImageLoader {
         let filename = (path as NSString).lastPathComponent
         result.append(("File", filename))
 
-        // File size
-        if let attrs = try? FileManager.default.attributesOfItem(atPath: path),
-           let size = attrs[.size] as? UInt64
-        {
-            result.append(("Size", formatFileSize(size)))
+        // File size and modification time
+        if let attrs = try? FileManager.default.attributesOfItem(atPath: path) {
+            if let size = attrs[.size] as? UInt64 {
+                result.append(("Size", formatFileSize(size)))
+            }
+            if let modDate = attrs[.modificationDate] as? Date {
+                result.append(("Modified", formatDate(modDate)))
+            }
         }
 
         let url = URL(fileURLWithPath: path)
@@ -483,6 +486,16 @@ enum ImageLoader {
         }
 
         return result
+    }
+
+    private static let dateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return f
+    }()
+
+    private static func formatDate(_ date: Date) -> String {
+        dateFormatter.string(from: date)
     }
 
     private static func formatFileSize(_ bytes: UInt64) -> String {

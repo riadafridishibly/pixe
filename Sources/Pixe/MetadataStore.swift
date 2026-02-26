@@ -216,6 +216,26 @@ final class MetadataStore {
         }
     }
 
+    func cachedMtimeWithoutSignature(path: String) -> Double? {
+        queue.sync {
+            let sql = """
+            SELECT mtime
+            FROM image_meta
+            WHERE path = ?1 AND mtime > 0
+            LIMIT 1;
+            """
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt else {
+                return nil
+            }
+            defer { sqlite3_finalize(stmt) }
+
+            sqlite3_bind_text(stmt, 1, path, -1, sqliteTransient)
+            guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+            return sqlite3_column_double(stmt, 0)
+        }
+    }
+
     func upsertExif(path: String, mtime: Double, fileSize: Int64, captureDate: Date?) {
         queue.sync {
             let sql = """

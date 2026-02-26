@@ -74,11 +74,12 @@ class ImageWindow: NSWindow {
         infoPanel.state = .active
         infoPanel.wantsLayer = true
         infoPanel.layer?.cornerRadius = 8
+        infoPanel.layer?.backgroundColor = NSColor(white: 0.0, alpha: 0.6).cgColor
         infoPanel.isHidden = true
 
         infoPanelLabel = NSTextField(wrappingLabelWithString: "")
-        infoPanelLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-        infoPanelLabel.textColor = NSColor(white: 0.85, alpha: 1.0)
+        infoPanelLabel.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
+        infoPanelLabel.textColor = NSColor(white: 0.9, alpha: 1.0)
         infoPanelLabel.isSelectable = false
         infoPanelLabel.drawsBackground = false
         infoPanelLabel.isBezeled = false
