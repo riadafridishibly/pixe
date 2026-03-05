@@ -25,7 +25,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
+        if config.shuffle {
+            imageList.shuffle()
+        }
+
         renderer = Renderer(device: device, imageList: imageList, initialMode: initialMode, config: config)
+        if config.autoplay {
+            renderer.autoplayInterval = config.autoplayInterval
+        }
 
         metalView = MetalImageView(frame: .zero, device: device)
         metalView.delegate = renderer
@@ -38,6 +45,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         if initialMode == .image {
             renderer.loadCurrentImage()
+            if config.autoplay {
+                renderer.startAutoplay()
+            }
         } else {
             renderer.updateWindowTitle()
         }

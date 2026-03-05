@@ -18,6 +18,7 @@ Pixe handles thousands of images efficiently with smart memory management, thumb
 - **RAW support** — ARW, CR2, CR3, NEF, RAF, ORF, RW2, DNG, PEF, SRW, X3F (instant embedded preview, full decode in background)
 - **Display-resolution aware loading** — images downsampled to viewport size to keep memory bounded
 - **LRU thumbnail cache** with optional disk persistence (`~/.cache/pixe/thumbs/`)
+- **Shuffle & slideshow** — randomize order (`s`), auto-advance images (`a`)
 - **Metal rendering** — no Core Image, no MTKTextureLoader, direct texture uploads
 
 ## Requirements
@@ -83,6 +84,9 @@ pixe [options] <image|directory> ...
 | `--include <exts>` | Only show these extensions (e.g. `jpg,png`) |
 | `--exclude <exts>` | Hide these extensions (last one wins if both `--include` and `--exclude` are set) |
 | `--exclude-dir <dirs>` | Skip directories by name or path (e.g. `node_modules,~/Photos/Trash`) |
+| `--shuffle` | Start with images in random order |
+| `--autoplay` | Start slideshow (auto-advance images) |
+| `--autoplay-interval <sec>` | Slideshow interval in seconds (default: 3, implies `--autoplay`) |
 | `--quiet` | Suppress startup config message |
 | `--warm-cache` | Pre-populate thumbnail/metadata cache headlessly and exit |
 | `--clean-thumbs` | Delete thumbnail cache and exit |
@@ -124,6 +128,9 @@ pixe --max-height 1080 ~/Photos # Only images at most 1080px tall
 pixe --exclude-dir=node_modules ~/project # Skip node_modules directories
 pixe --no-cache ~/project      # Skip disk cache
 pixe --warm-cache ~/Pictures   # Pre-populate cache headlessly
+pixe --shuffle ~/Pictures     # Browse in random order
+pixe --autoplay ~/Pictures    # Slideshow with 3s interval
+pixe --autoplay-interval 5 ~/Pictures # Slideshow with 5s interval
 ```
 
 ## Controls
@@ -141,6 +148,7 @@ pixe --warm-cache ~/Pictures   # Pre-populate cache headlessly
 | `/` then type | Search by filename prefix (`Enter` keep, `Esc` cancel/restore) |
 | `d` | Delete image (move to trash) |
 | `o` | Reveal in Finder |
+| `s` | Toggle shuffle (randomize order) |
 | `i` | Toggle image info |
 | `f` | Toggle fullscreen |
 | `m` | Memory profiler |
@@ -160,6 +168,8 @@ pixe --warm-cache ~/Pictures   # Pre-populate cache headlessly
 | `g` / `G` | First / last image |
 | `d` | Delete image (move to trash) |
 | `o` | Reveal in Finder |
+| `s` | Toggle shuffle (randomize order) |
+| `a` | Toggle autoplay (slideshow) |
 | `i` | Toggle image info |
 | `f` | Toggle fullscreen |
 | `m` | Memory profiler |

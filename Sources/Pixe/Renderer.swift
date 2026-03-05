@@ -89,6 +89,9 @@ class Renderer: NSObject, MTKViewDelegate {
     private var prefetchGeneration: Int = 0  // increments whenever adjacency set changes
     private var thumbnailSearchQuery: String?
     private var infoRestoreWorkItem: DispatchWorkItem?
+    private var autoplayTimer: DispatchSourceTimer?
+    var autoplayInterval: TimeInterval = 3.0
+    var isAutoplayActive: Bool { autoplayTimer != nil }
     private let displayDecodeQueue = DispatchQueue(label: "pixe.display-decode", qos: .userInitiated)
     private let prefetchDecodeQueue = DispatchQueue(label: "pixe.prefetch-decode", qos: .utility, attributes: .concurrent)
     private let prefetchDecodeSemaphore = DispatchSemaphore(value: 1)
@@ -628,6 +631,7 @@ class Renderer: NSObject, MTKViewDelegate {
                 let padded = String(repeating: " ", count: totalWidth - String(index + 1).count) + "\(index + 1)"
                 text = "[\(padded)/\(imageList.count)]\(suffix) \(shortenPath(path))"
             }
+            if imageList.isShuffled { text += " [shuffle]" }
             window?.updateInfo(text)
         case .image:
             guard let path = imageList.currentPath else { return }
@@ -636,6 +640,8 @@ class Renderer: NSObject, MTKViewDelegate {
                 text += " \u{2014} \(tex.width) \u{00D7} \(tex.height)"
             }
             text += " \u{2014} [\(imageList.currentIndex + 1)/\(imageList.count)]"
+            if imageList.isShuffled { text += " [shuffle]" }
+            if isAutoplayActive { text += " [autoplay]" }
             window?.updateInfo(text)
         }
         updateThumbnailGIFIfNeeded()
@@ -797,6 +803,65 @@ class Renderer: NSObject, MTKViewDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: item)
     }
 
+    // MARK: - Shuffle
+
+    func toggleShuffle() {
+        if imageList.isShuffled {
+            imageList.unshuffle()
+        } else {
+            imageList.shuffle()
+        }
+        thumbnailCache?.invalidateAll()
+        gridLayout.totalItems = imageList.count
+        if mode == .thumbnail {
+            gridLayout.selectedIndex = 0
+            gridLayout.scrollToSelection()
+        }
+        prefetchCache.removeAll()
+        updateWindowTitle()
+        if let view = window?.contentView as? MTKView {
+            view.needsDisplay = true
+        }
+    }
+
+    // MARK: - Autoplay
+
+    func toggleAutoplay() {
+        if isAutoplayActive {
+            stopAutoplay()
+        } else {
+            startAutoplay()
+        }
+        updateInfoBar()
+    }
+
+    func startAutoplay() {
+        stopAutoplay()
+        guard mode == .image else { return }
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        autoplayTimer = timer
+        timer.schedule(deadline: .now() + autoplayInterval)
+        timer.setEventHandler { [weak self] in
+            self?.autoplayAdvance()
+        }
+        timer.resume()
+    }
+
+    func stopAutoplay() {
+        autoplayTimer?.cancel()
+        autoplayTimer = nil
+    }
+
+    private func autoplayAdvance() {
+        guard mode == .image else {
+            stopAutoplay()
+            return
+        }
+        imageList.goNext()
+        loadCurrentImage()
+        autoplayTimer?.schedule(deadline: .now() + autoplayInterval)
+    }
+
     // MARK: - Mode Switching
 
     func enterImageMode(at index: Int) {
@@ -813,6 +878,7 @@ class Renderer: NSObject, MTKViewDelegate {
 
     func enterThumbnailMode() {
         guard hasMultipleImages else { return }
+        stopAutoplay()
         mode = .thumbnail
         gridLayout.selectedIndex = imageList.currentIndex
         currentTexture = nil

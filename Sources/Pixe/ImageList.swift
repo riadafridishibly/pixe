@@ -9,6 +9,8 @@ class ImageList {
 
     private var paths: [String] = []
     private(set) var currentIndex: Int = 0
+    private var originalPaths: [String]?
+    private(set) var isShuffled: Bool = false
     private let sortMode: SortMode
     private let minSize: Int
     private let minWidth: Int
@@ -624,6 +626,34 @@ class ImageList {
         currentIndex = max(0, min(index, paths.count - 1))
     }
 
+    func shuffle() {
+        guard !paths.isEmpty else { return }
+        let currentPath = self.currentPath
+        if originalPaths == nil {
+            originalPaths = paths
+        }
+        paths.shuffle()
+        isShuffled = true
+        if let currentPath, let newIndex = paths.firstIndex(of: currentPath) {
+            currentIndex = newIndex
+        } else {
+            currentIndex = 0
+        }
+    }
+
+    func unshuffle() {
+        guard let original = originalPaths else { return }
+        let currentPath = self.currentPath
+        paths = original
+        originalPaths = nil
+        isShuffled = false
+        if let currentPath, let newIndex = paths.firstIndex(of: currentPath) {
+            currentIndex = newIndex
+        } else {
+            clampCurrentIndex()
+        }
+    }
+
     @discardableResult
     func remove(at index: Int) -> String? {
         guard index >= 0 && index < paths.count else { return nil }
@@ -631,6 +661,10 @@ class ImageList {
         deletedPaths.insert(removed)
         knownPaths.remove(removed)
         exifDateCache.removeValue(forKey: removed)
+        if var original = originalPaths {
+            original.removeAll { $0 == removed }
+            originalPaths = original.isEmpty ? nil : original
+        }
         if paths.isEmpty {
             currentIndex = 0
         } else if index < currentIndex {
