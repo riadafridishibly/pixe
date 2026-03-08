@@ -90,6 +90,7 @@ class Renderer: NSObject, MTKViewDelegate {
     private var thumbnailSearchQuery: String?
     private var infoRestoreWorkItem: DispatchWorkItem?
     private var autoplayTimer: DispatchSourceTimer?
+    private var startupAutoplayPending: Bool = false
     var autoplayInterval: TimeInterval = 3.0
     var isAutoplayActive: Bool { autoplayTimer != nil }
     private let displayDecodeQueue = DispatchQueue(label: "pixe.display-decode", qos: .userInitiated)
@@ -126,6 +127,7 @@ class Renderer: NSObject, MTKViewDelegate {
                 self.thumbnailCache = ThumbnailCache(device: self.device, config: self.config)
             }
             self.updateWindowTitle()
+            self.startPendingAutoplayIfPossible()
             if let view = self.window?.contentView as? MTKView {
                 view.needsDisplay = true
             }
@@ -149,6 +151,7 @@ class Renderer: NSObject, MTKViewDelegate {
             self.gridLayout.totalItems = self.imageList.count
             self.gridLayout.clampScroll()
             self.updateWindowTitle()
+            self.startPendingAutoplayIfPossible()
             if let view = self.window?.contentView as? MTKView {
                 view.needsDisplay = true
             }
@@ -826,6 +829,11 @@ class Renderer: NSObject, MTKViewDelegate {
 
     // MARK: - Autoplay
 
+    func enableStartupAutoplay() {
+        startupAutoplayPending = true
+        startPendingAutoplayIfPossible()
+    }
+
     func toggleAutoplay() {
         if isAutoplayActive {
             stopAutoplay()
@@ -860,6 +868,20 @@ class Renderer: NSObject, MTKViewDelegate {
         imageList.goNext()
         loadCurrentImage()
         autoplayTimer?.schedule(deadline: .now() + autoplayInterval)
+    }
+
+    private func startPendingAutoplayIfPossible() {
+        guard startupAutoplayPending else { return }
+        guard imageList.count > 0 else { return }
+        if mode == .thumbnail {
+            enterImageMode(at: imageList.currentIndex)
+        } else if mode == .image, currentTexture == nil {
+            loadCurrentImage()
+        }
+        startAutoplay()
+        if isAutoplayActive {
+            startupAutoplayPending = false
+        }
     }
 
     // MARK: - Mode Switching

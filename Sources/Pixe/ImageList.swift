@@ -244,13 +244,17 @@ class ImageList {
             return
         }
 
-        paths.append(contentsOf: filtered)
+        let preferredPath = currentPath
+        var canonical = canonicalPaths()
+        canonical.append(contentsOf: filtered)
+        applyCanonicalPaths(canonical, preferredPath: preferredPath)
         onBatchAdded?(paths.count)
     }
 
     private func reconcileScannedDirectories(_ scanned: [(dirPath: String, discovered: Set<String>)]) {
         guard !scanned.isEmpty else { return }
-        let reconciled = paths.filter { path in
+        let source = canonicalPaths()
+        let reconciled = source.filter { path in
             if explicitFilePaths.contains(path) {
                 return true
             }
@@ -262,9 +266,9 @@ class ImageList {
             }
             return true
         }
-        paths = reconciled
+        let preferredPath = currentPath
+        applyCanonicalPaths(reconciled, preferredPath: preferredPath)
         knownPaths = Set(reconciled)
-        clampCurrentIndex()
     }
 
     private func isPath(_ path: String, insideDirectory dir: String) -> Bool {
@@ -277,8 +281,11 @@ class ImageList {
 
     private func finalizeList(shouldSort: Bool) {
         if !deferredDiscoveredPaths.isEmpty {
-            paths.append(contentsOf: deferredDiscoveredPaths)
+            let preferredPath = currentPath
+            var canonical = canonicalPaths()
+            canonical.append(contentsOf: deferredDiscoveredPaths)
             deferredDiscoveredPaths.removeAll(keepingCapacity: true)
+            applyCanonicalPaths(canonical, preferredPath: preferredPath)
         }
         let effectiveShouldSort = shouldSort || deferLiveBatchesUntilFinalSort
 
@@ -294,7 +301,7 @@ class ImageList {
         isSorting = true
         sortGeneration += 1
         let generation = sortGeneration
-        let snapshot = paths
+        let snapshot = canonicalPaths()
         let requestCurrentPath = currentPath
         let sortMode = self.sortMode
 
@@ -328,18 +335,40 @@ class ImageList {
 
     private func applySortedPaths(_ sorted: [String], preferredPath: String?) {
         let filtered = sorted.filter { !deletedPaths.contains($0) }
-        paths = filtered
+        applyCanonicalPaths(filtered, preferredPath: preferredPath)
         knownPaths = Set(filtered)
+
+        isSorting = false
+        deferLiveBatchesUntilFinalSort = false
+        onEnumerationComplete?(paths.count)
+    }
+
+    private func canonicalPaths() -> [String] {
+        if isShuffled {
+            return originalPaths ?? paths
+        }
+        return paths
+    }
+
+    private func applyCanonicalPaths(_ canonical: [String], preferredPath: String?) {
+        if isShuffled {
+            originalPaths = canonical
+            let canonicalSet = Set(canonical)
+            var shuffled = paths.filter { canonicalSet.contains($0) }
+            let shuffledSet = Set(shuffled)
+            for path in canonical where !shuffledSet.contains(path) {
+                shuffled.append(path)
+            }
+            paths = shuffled
+        } else {
+            paths = canonical
+        }
 
         if let preferredPath, let index = paths.firstIndex(of: preferredPath) {
             currentIndex = index
         } else {
             clampCurrentIndex()
         }
-
-        isSorting = false
-        deferLiveBatchesUntilFinalSort = false
-        onEnumerationComplete?(paths.count)
     }
 
     private func clampCurrentIndex() {
@@ -627,13 +656,13 @@ class ImageList {
     }
 
     func shuffle() {
-        guard !paths.isEmpty else { return }
         let currentPath = self.currentPath
         if originalPaths == nil {
             originalPaths = paths
         }
-        paths.shuffle()
         isShuffled = true
+        guard !paths.isEmpty else { return }
+        paths.shuffle()
         if let currentPath, let newIndex = paths.firstIndex(of: currentPath) {
             currentIndex = newIndex
         } else {
@@ -663,7 +692,7 @@ class ImageList {
         exifDateCache.removeValue(forKey: removed)
         if var original = originalPaths {
             original.removeAll { $0 == removed }
-            originalPaths = original.isEmpty ? nil : original
+            originalPaths = original
         }
         if paths.isEmpty {
             currentIndex = 0

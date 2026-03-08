@@ -45,11 +45,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         if initialMode == .image {
             renderer.loadCurrentImage()
-            if config.autoplay {
-                renderer.startAutoplay()
-            }
         } else {
             renderer.updateWindowTitle()
+        }
+
+        if config.autoplay {
+            renderer.enableStartupAutoplay()
         }
 
         window.makeKeyAndOrderFront(nil)
