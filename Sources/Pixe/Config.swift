@@ -339,13 +339,11 @@ struct Config {
             case let a where a.hasPrefix("--autoplay-interval="):
                 if let v = Double(String(a.dropFirst("--autoplay-interval=".count))), v > 0 {
                     autoplayInterval = v
-                    autoplay = true
                 }
             case "--autoplay-interval":
                 i += 1
                 if i < allArgs.count, let v = Double(allArgs[i]), v > 0 {
                     autoplayInterval = v
-                    autoplay = true
                 }
             case let a where a.hasPrefix("--config="):
                 break  // already handled in pre-scan
@@ -498,7 +496,7 @@ struct Config {
           --strip-gap <points> Gap between images in strip view (default: 20, min: 0)
           --shuffle            Start with images in random order
           --autoplay           Start slideshow (auto-advance images)
-          --autoplay-interval <sec>  Slideshow interval in seconds (default: 3, implies --autoplay)
+          --autoplay-interval <sec>  Slideshow interval in seconds (default: 3)
           --config <path>      Config file path (default: ~/.config/pixe/config, NONE to skip)
           --quiet              Suppress startup config message
           --clean-thumbs       Delete thumbnail cache and exit
