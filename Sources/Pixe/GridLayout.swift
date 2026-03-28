@@ -44,6 +44,8 @@ class GridLayout {
     private var rowInfos: [RowInfo] = []
     private var aspects: [Float] = []
     private var layoutDirty = true
+    /// Remembered x-center for consistent vertical navigation (like "desired column" in text editors).
+    private var desiredXCenter: Float?
 
     // MARK: - Aspect Ratios
 
@@ -358,6 +360,7 @@ class GridLayout {
         if selectedIndex > row.startIndex {
             selectedIndex -= 1
         }
+        desiredXCenter = nil
         scrollToSelection()
     }
 
@@ -369,6 +372,7 @@ class GridLayout {
         if selectedIndex < row.startIndex + row.count - 1 {
             selectedIndex += 1
         }
+        desiredXCenter = nil
         scrollToSelection()
     }
 
@@ -378,7 +382,8 @@ class GridLayout {
         let ri = rowIndex(for: selectedIndex)
         guard ri > 0 else { return }
         let rect = itemRects[selectedIndex]
-        let xCenter = rect.x + rect.width / 2.0
+        let xCenter = desiredXCenter ?? (rect.x + rect.width / 2.0)
+        if desiredXCenter == nil { desiredXCenter = xCenter }
         selectedIndex = closestItemInRow(ri - 1, toXCenter: xCenter)
         scrollToSelection()
     }
@@ -389,7 +394,8 @@ class GridLayout {
         let ri = rowIndex(for: selectedIndex)
         guard ri < rowInfos.count - 1 else { return }
         let rect = itemRects[selectedIndex]
-        let xCenter = rect.x + rect.width / 2.0
+        let xCenter = desiredXCenter ?? (rect.x + rect.width / 2.0)
+        if desiredXCenter == nil { desiredXCenter = xCenter }
         selectedIndex = closestItemInRow(ri + 1, toXCenter: xCenter)
         scrollToSelection()
     }
@@ -410,6 +416,7 @@ class GridLayout {
         let rect = itemRects[selectedIndex]
         let xCenter = rect.x + rect.width / 2.0
         selectedIndex = closestItemInRow(targetRow, toXCenter: xCenter)
+        desiredXCenter = nil
         scrollToSelection()
     }
 
@@ -429,17 +436,20 @@ class GridLayout {
         let rect = itemRects[selectedIndex]
         let xCenter = rect.x + rect.width / 2.0
         selectedIndex = closestItemInRow(targetRow, toXCenter: xCenter)
+        desiredXCenter = nil
         scrollToSelection()
     }
 
     func goToFirst() {
         selectedIndex = 0
+        desiredXCenter = nil
         scrollToSelection()
     }
 
     func goToLast() {
         guard totalItems > 0 else { return }
         selectedIndex = totalItems - 1
+        desiredXCenter = nil
         scrollToSelection()
     }
 
