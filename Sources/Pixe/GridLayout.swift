@@ -43,20 +43,43 @@ class GridLayout {
     private var itemRects: [ItemRect] = []
     private var rowInfos: [RowInfo] = []
     private var aspects: [Float] = []
+    /// Tracks which indices have a real aspect ratio (from header or thumbnail).
+    private var aspectLocked: Set<Int> = []
     private var layoutDirty = true
     /// Remembered x-center for consistent vertical navigation (like "desired column" in text editors).
     private var desiredXCenter: Float?
 
     // MARK: - Aspect Ratios
 
+    /// Called every frame from the thumbnail cache. Skips indices already
+    /// locked by the preload pass so late-arriving thumbnails cannot cause reflow.
     func updateAspects(from cacheAspects: [Int: Float]) {
+        guard aspectLocked.count < totalItems else { return }
+        applyAspects(cacheAspects, skipLocked: true)
+    }
+
+    /// Bulk-set preloaded aspects (from DB or file headers). Locks all
+    /// provided indices so the layout is stable before thumbnails appear.
+    func setPreloadedAspects(_ preloaded: [Int: Float]) {
+        applyAspects(preloaded, skipLocked: false)
+    }
+
+    func resetAspects() {
+        aspects.removeAll()
+        aspectLocked.removeAll()
+        invalidateLayout()
+    }
+
+    private func applyAspects(_ newAspects: [Int: Float], skipLocked: Bool) {
         var changed = false
-        for (index, aspect) in cacheAspects {
+        for (index, aspect) in newAspects {
+            if skipLocked && aspectLocked.contains(index) { continue }
             ensureAspectsCapacity(index + 1)
             if aspects[index] != aspect {
                 aspects[index] = aspect
                 changed = true
             }
+            aspectLocked.insert(index)
         }
         if changed { invalidateLayout() }
     }

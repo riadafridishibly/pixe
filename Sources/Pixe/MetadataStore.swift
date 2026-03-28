@@ -338,6 +338,78 @@ final class MetadataStore {
         }
     }
 
+    func bulkCachedDimensions(paths: [String]) -> [String: (width: Int, height: Int)] {
+        guard !paths.isEmpty else { return [:] }
+        return queue.sync {
+            var result: [String: (width: Int, height: Int)] = [:]
+            result.reserveCapacity(paths.count)
+
+            // Query in batches to stay within SQLite variable limits
+            let batchSize = 500
+            for batchStart in stride(from: 0, to: paths.count, by: batchSize) {
+                let batchEnd = min(batchStart + batchSize, paths.count)
+                let batch = paths[batchStart ..< batchEnd]
+                let placeholders = Array(repeating: "?", count: batch.count).joined(separator: ",")
+                let sql = """
+                SELECT path, pixel_width, pixel_height
+                FROM image_meta
+                WHERE path IN (\(placeholders)) AND pixel_width IS NOT NULL;
+                """
+                var stmt: OpaquePointer?
+                guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt else {
+                    continue
+                }
+                defer { sqlite3_finalize(stmt) }
+
+                for (i, path) in batch.enumerated() {
+                    sqlite3_bind_text(stmt, Int32(i + 1), path, -1, sqliteTransient)
+                }
+
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    guard let cstr = sqlite3_column_text(stmt, 0) else { continue }
+                    let path = String(cString: cstr)
+                    let w = Int(sqlite3_column_int(stmt, 1))
+                    let h = Int(sqlite3_column_int(stmt, 2))
+                    result[path] = (width: w, height: h)
+                }
+            }
+            return result
+        }
+    }
+
+    func bulkUpsertDimensions(entries: [(path: String, width: Int, height: Int)]) {
+        guard !entries.isEmpty else { return }
+        queue.sync {
+            guard exec("BEGIN IMMEDIATE TRANSACTION;") else { return }
+            let sql = """
+            INSERT INTO image_meta(path, mtime, file_size, pixel_width, pixel_height, exif_checked, updated_at)
+            VALUES(?1, 0, 0, ?2, ?3, 0, ?4)
+            ON CONFLICT(path) DO UPDATE SET
+                pixel_width = excluded.pixel_width,
+                pixel_height = excluded.pixel_height,
+                updated_at = excluded.updated_at;
+            """
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt else {
+                _ = exec("ROLLBACK;")
+                return
+            }
+            defer { sqlite3_finalize(stmt) }
+
+            let now = Date().timeIntervalSince1970
+            for entry in entries {
+                sqlite3_reset(stmt)
+                sqlite3_clear_bindings(stmt)
+                sqlite3_bind_text(stmt, 1, entry.path, -1, sqliteTransient)
+                sqlite3_bind_int64(stmt, 2, Int64(entry.width))
+                sqlite3_bind_int64(stmt, 3, Int64(entry.height))
+                sqlite3_bind_double(stmt, 4, now)
+                _ = sqlite3_step(stmt)
+            }
+            _ = exec("COMMIT;")
+        }
+    }
+
     func cachedDimensions(path: String) -> (width: Int, height: Int)? {
         queue.sync {
             let sql = """

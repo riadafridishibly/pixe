@@ -99,6 +99,9 @@ class Renderer: NSObject, MTKViewDelegate {
     // Grid
     let gridLayout = GridLayout()
     var thumbnailCache: ThumbnailCache?
+    private let aspectPreloadQueue = DispatchQueue(label: "pixe.aspect-preload", qos: .userInitiated)
+    private var aspectPreloadGeneration = 0
+    private var aspectPreloadedCount = 0
     var backingScaleFactor: CGFloat = 2.0
     var selectionEffect: SelectionEffect = .rainbow
     var morphEffect: MorphEffect = .tvStatic
@@ -174,6 +177,7 @@ class Renderer: NSObject, MTKViewDelegate {
         if hasMultipleImages || imageList.hasDirectoryArguments {
             thumbnailCache = ThumbnailCache(device: device, config: config)
             gridLayout.totalItems = imageList.count
+            preloadAspectsAsync()
         }
 
         if mode == .thumbnail {
@@ -190,6 +194,7 @@ class Renderer: NSObject, MTKViewDelegate {
             if self.thumbnailCache == nil {
                 self.thumbnailCache = ThumbnailCache(device: self.device, config: self.config)
             }
+            self.preloadAspectsAsync()
             self.updateWindowTitle()
             self.startPendingAutoplayIfPossible()
             if let view = self.window?.contentView as? MTKView {
@@ -212,12 +217,59 @@ class Renderer: NSObject, MTKViewDelegate {
             self.thumbnailGIFAnimator = nil
             self.thumbnailGIFPath = nil
             self.thumbnailCache?.invalidateAll()
+            self.gridLayout.resetAspects()
+            self.aspectPreloadedCount = 0
             self.gridLayout.totalItems = self.imageList.count
             self.gridLayout.clampScroll()
+            self.preloadAspectsAsync(from: 0)
             self.updateWindowTitle()
             self.startPendingAutoplayIfPossible()
             if let view = self.window?.contentView as? MTKView {
                 view.needsDisplay = true
+            }
+        }
+    }
+
+    /// Preload aspect ratios on a background thread so the layout is stable
+    /// before thumbnails appear. Only processes paths added since the last call.
+    private func preloadAspectsAsync(from startIndex: Int? = nil) {
+        let start = startIndex ?? aspectPreloadedCount
+        let paths = imageList.allPaths
+        guard start < paths.count else { return }
+        aspectPreloadedCount = paths.count
+
+        aspectPreloadGeneration += 1
+        let generation = aspectPreloadGeneration
+        let store = thumbnailCache?.metadataStore
+        let slice = Array(paths[start...])
+
+        aspectPreloadQueue.async { [weak self] in
+            let cached = store?.bulkCachedDimensions(paths: slice) ?? [:]
+
+            var aspects: [Int: Float] = [:]
+            aspects.reserveCapacity(slice.count)
+            var newDimensions: [(path: String, width: Int, height: Int)] = []
+
+            for (i, path) in slice.enumerated() {
+                let dims = cached[path] ?? ImageLoader.imageDimensions(path: path)
+                guard let dims = dims else { continue }
+                let aspect = Float(dims.width) / max(Float(dims.height), 1.0)
+                aspects[start + i] = aspect
+                if cached[path] == nil {
+                    newDimensions.append((path: path, width: dims.width, height: dims.height))
+                }
+            }
+
+            if !newDimensions.isEmpty {
+                store?.bulkUpsertDimensions(entries: newDimensions)
+            }
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self, self.aspectPreloadGeneration == generation else { return }
+                self.gridLayout.setPreloadedAspects(aspects)
+                if let view = self.window?.contentView as? MTKView {
+                    view.needsDisplay = true
+                }
             }
         }
     }
@@ -907,7 +959,10 @@ class Renderer: NSObject, MTKViewDelegate {
             imageList.shuffle()
         }
         thumbnailCache?.invalidateAll()
+        gridLayout.resetAspects()
+        aspectPreloadedCount = 0
         gridLayout.totalItems = imageList.count
+        preloadAspectsAsync(from: 0)
         if mode == .thumbnail {
             gridLayout.selectedIndex = imageList.currentIndex
             gridLayout.scrollToSelection()
