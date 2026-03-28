@@ -165,6 +165,7 @@ class Renderer: NSObject, MTKViewDelegate {
         // The real drawable size arrives via mtkView(_:drawableSizeWillChange:).
         viewportSize = SIMD2(1600, 1200)
         autoplayInterval = config.autoplayInterval
+        gridLayout.padding = config.gap
         super.init()
         setupPipeline()
         setupVertexBuffer()
@@ -264,6 +265,11 @@ class Renderer: NSObject, MTKViewDelegate {
         selPipelineDescriptor.fragmentFunction = selectionFunction
         selPipelineDescriptor.vertexDescriptor = vertexDescriptor
         selPipelineDescriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
+        selPipelineDescriptor.colorAttachments[0].isBlendingEnabled = true
+        selPipelineDescriptor.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
+        selPipelineDescriptor.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
+        selPipelineDescriptor.colorAttachments[0].sourceAlphaBlendFactor = .sourceAlpha
+        selPipelineDescriptor.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
         selectionPipelineState = try! device.makeRenderPipelineState(descriptor: selPipelineDescriptor)
 
         // Morph thumbnail pipeline (animated texture effect on selected item)
@@ -1137,31 +1143,6 @@ class Renderer: NSObject, MTKViewDelegate {
 
         let visible = gridLayout.visibleRange()
 
-        // Draw animated selection border (single procedural draw call)
-        if visible.contains(gridLayout.selectedIndex) {
-            let selIdx = gridLayout.selectedIndex
-            let (_, _, itemW, itemH) = gridLayout.itemRect(at: selIdx)
-            let borderWidth: Float = 6.0
-            let outerW = itemW + borderWidth * 2
-            let outerH = itemH + borderWidth * 2
-            let animTime = Float(CACurrentMediaTime() - selectionAnimationStart)
-
-            encoder.setRenderPipelineState(selectionPipelineState)
-            encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
-
-            var outerTransform = Uniforms(transform: gridLayout.outerHighlightTransformForIndex(selIdx))
-            encoder.setVertexBytes(&outerTransform, length: MemoryLayout<Uniforms>.stride, index: 1)
-
-            var selUniforms = SelectionUniforms(
-                time: animTime,
-                rectSize: SIMD2<Float>(outerW, outerH),
-                borderWidth: borderWidth,
-                effectType: selectionEffect.rawValue
-            )
-            encoder.setFragmentBytes(&selUniforms, length: MemoryLayout<SelectionUniforms>.stride, index: 0)
-            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
-        }
-
         // Draw visible thumbnails — collect uniforms into a shared buffer
         encoder.setRenderPipelineState(pipelineState)
         encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
@@ -1248,6 +1229,29 @@ class Renderer: NSObject, MTKViewDelegate {
                 encoder.setFragmentBytes(&morph, length: MemoryLayout<MorphUniforms>.stride, index: 0)
                 encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
             }
+        }
+
+        // Draw animated selection border on top of thumbnails
+        if visible.contains(gridLayout.selectedIndex) {
+            let selIdx = gridLayout.selectedIndex
+            let (_, _, itemW, itemH) = gridLayout.itemRect(at: selIdx)
+            let borderWidth: Float = 6.0
+            let animTime = Float(CACurrentMediaTime() - selectionAnimationStart)
+
+            encoder.setRenderPipelineState(selectionPipelineState)
+            encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
+
+            var transform = Uniforms(transform: gridLayout.transformForIndex(selIdx))
+            encoder.setVertexBytes(&transform, length: MemoryLayout<Uniforms>.stride, index: 1)
+
+            var selUniforms = SelectionUniforms(
+                time: animTime,
+                rectSize: SIMD2<Float>(itemW, itemH),
+                borderWidth: borderWidth,
+                effectType: selectionEffect.rawValue
+            )
+            encoder.setFragmentBytes(&selUniforms, length: MemoryLayout<SelectionUniforms>.stride, index: 0)
+            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
         }
 
         encoder.endEncoding()

@@ -72,8 +72,8 @@ enum ShaderSource {
         float distFromEdge = min(min(distLeft, distRight), min(distTop, distBottom));
 
         if (distFromEdge >= sel.borderWidth) {
-            // Inside thumbnail area — background color
-            return float4(0.08, 0.08, 0.08, 1.0);
+            // Inside thumbnail area — transparent so thumbnail shows through
+            return float4(0.0, 0.0, 0.0, 0.0);
         }
 
         if (sel.effectType == 0) {

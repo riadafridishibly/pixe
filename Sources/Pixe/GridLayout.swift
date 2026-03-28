@@ -8,7 +8,9 @@ class GridLayout {
     var thumbnailSize: Float = 200.0 {
         didSet { if oldValue != thumbnailSize { invalidateLayout() } }
     }
-    let padding: Float = 10.0
+    var padding: Float = 2.0 {
+        didSet { if oldValue != padding { invalidateLayout() } }
+    }
 
     var viewportWidth: Float = 800.0 {
         didSet { if oldValue != viewportWidth { invalidateLayout() } }
