@@ -1303,7 +1303,7 @@ class Renderer: NSObject, MTKViewDelegate {
         encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
         encoder.setFragmentSamplerState(samplerState, index: 0)
 
-        if config.strip && scale <= 1.0 && imageList.count > 1 {
+        if config.strip && scale <= 1.0 && rotationSteps == 0 && imageList.count > 1 {
             drawImageStrip(encoder: encoder, currentTexture: currentTex)
         } else {
             var uniforms = Uniforms(transform: buildTransformMatrix())
