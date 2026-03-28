@@ -351,6 +351,7 @@ class InputHandler {
             renderer.generateMemoryReport()
 
         case "g":
+            renderer.stopAutoplay()
             renderer.imageList.goFirst()
             renderer.loadCurrentImage()
 
@@ -369,6 +370,7 @@ class InputHandler {
 
         default:
             if event.characters == "G" {
+                renderer.stopAutoplay()
                 renderer.imageList.goLast()
                 renderer.loadCurrentImage()
             } else if event.characters == "Y" {
