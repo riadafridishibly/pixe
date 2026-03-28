@@ -57,6 +57,8 @@ struct Config {
     let warmCache: Bool
     let gap: Float
     let selectionEffect: String?
+    let strip: Bool
+    let stripGap: Float
     let quiet: Bool
     let configFileLoaded: Bool
     let configFileFlags: [String]
@@ -162,6 +164,8 @@ struct Config {
         var autoplayInterval: TimeInterval = 3.0
         var gap: Float = 2.0
         var selectionEffect: String?
+        var strip = false
+        var stripGap: Float = 20.0
         var imageArguments: [String] = []
         var includeExts: Set<String>?
         var excludeExts: Set<String>?
@@ -323,6 +327,13 @@ struct Config {
             case "--selection-effect":
                 i += 1
                 if i < allArgs.count { selectionEffect = allArgs[i] }
+            case "--strip":
+                strip = true
+            case let a where a.hasPrefix("--strip-gap="):
+                if let v = Float(String(a.dropFirst("--strip-gap=".count))), v >= 0 { stripGap = v }
+            case "--strip-gap":
+                i += 1
+                if i < allArgs.count, let v = Float(allArgs[i]), v >= 0 { stripGap = v }
             case "--autoplay":
                 autoplay = true
             case let a where a.hasPrefix("--autoplay-interval="):
@@ -381,6 +392,8 @@ struct Config {
             warmCache: warmCache,
             gap: gap,
             selectionEffect: selectionEffect,
+            strip: strip,
+            stripGap: stripGap,
             quiet: quiet,
             configFileLoaded: configFileLoaded,
             configFileFlags: configFileArgs,
@@ -481,6 +494,8 @@ struct Config {
           --exclude-dir <dirs> Skip directories by name or path (e.g. node_modules,~/Photos/Trash)
           --gap <points>       Gap between thumbnails in points (default: 2, min: 0)
           --selection-effect <name>  Selection border style: rainbow, glow, solid (default: rainbow)
+          --strip              Show neighboring images in image view (infinite strip)
+          --strip-gap <points> Gap between images in strip view (default: 20, min: 0)
           --shuffle            Start with images in random order
           --autoplay           Start slideshow (auto-advance images)
           --autoplay-interval <sec>  Slideshow interval in seconds (default: 3, implies --autoplay)

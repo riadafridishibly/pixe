@@ -302,7 +302,7 @@ class InputHandler {
                 renderer.panBy(dx: panStep, dy: 0)
                 view.needsDisplay = true
             } else {
-                navigatePrevious(view: view)
+                navigate(direction: -1, view: view)
             }
 
         case "l":
@@ -310,7 +310,7 @@ class InputHandler {
                 renderer.panBy(dx: -panStep, dy: 0)
                 view.needsDisplay = true
             } else {
-                navigateNext(view: view)
+                navigate(direction: 1, view: view)
             }
 
         case "j":
@@ -341,10 +341,10 @@ class InputHandler {
             view.needsDisplay = true
 
         case "n", " ":
-            navigateNext(view: view)
+            navigate(direction: 1, view: view)
 
         case "p":
-            navigatePrevious(view: view)
+            navigate(direction: -1, view: view)
 
         case "d":
             renderer.deleteImage(at: renderer.imageList.currentIndex)
@@ -400,24 +400,22 @@ class InputHandler {
                 renderer?.enterThumbnailMode()
             }
         case 123:  // Left arrow
-            navigatePrevious(view: view)
+            navigate(direction: -1, view: view)
         case 124:  // Right arrow
-            navigateNext(view: view)
+            navigate(direction: 1, view: view)
         default:
             break
         }
     }
 
-    private func navigateNext(view: MTKView) {
+    private func navigate(direction: Int, view: MTKView) {
         renderer?.stopAutoplay()
-        renderer?.imageList.goNext()
-        renderer?.loadCurrentImage()
-    }
-
-    private func navigatePrevious(view: MTKView) {
-        renderer?.stopAutoplay()
-        renderer?.imageList.goPrevious()
-        renderer?.loadCurrentImage()
+        if renderer?.config.strip == true && renderer?.scale ?? 1.0 <= 1.0 {
+            renderer?.navigateWithStripAnimation(direction: direction)
+        } else {
+            if direction > 0 { renderer?.imageList.goNext() } else { renderer?.imageList.goPrevious() }
+            renderer?.loadCurrentImage()
+        }
     }
 
     // MARK: - Scroll Wheel
