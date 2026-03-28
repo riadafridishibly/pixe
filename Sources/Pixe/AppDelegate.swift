@@ -25,6 +25,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
+        if config.shuffle {
+            imageList.shuffle()
+        }
+
         renderer = Renderer(device: device, imageList: imageList, initialMode: initialMode, config: config)
 
         metalView = MetalImageView(frame: .zero, device: device)
@@ -40,6 +44,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             renderer.loadCurrentImage()
         } else {
             renderer.updateWindowTitle()
+        }
+
+        if config.autoplay {
+            renderer.enableStartupAutoplay()
         }
 
         window.makeKeyAndOrderFront(nil)

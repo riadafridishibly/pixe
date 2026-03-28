@@ -51,6 +51,9 @@ struct Config {
     let extensionFilter: ExtensionFilter
     let excludedDirNames: Set<String>
     let excludedDirPaths: Set<String>
+    let shuffle: Bool
+    let autoplay: Bool
+    let autoplayInterval: TimeInterval
     let warmCache: Bool
     let quiet: Bool
     let configFileLoaded: Bool
@@ -128,6 +131,9 @@ struct Config {
         var quiet = false
         var walkStrategy: DirectoryWalkStrategy = .auto
         var sortMode: SortMode = .name
+        var shuffle = false
+        var autoplay = false
+        var autoplayInterval: TimeInterval = 3.0
         var imageArguments: [String] = []
         var includeExts: Set<String>?
         var excludeExts: Set<String>?
@@ -277,6 +283,21 @@ struct Config {
                 if i < allArgs.count {
                     parseDirExclusions(allArgs[i], names: &excludedDirNames, paths: &excludedDirPaths)
                 }
+            case "--shuffle":
+                shuffle = true
+            case "--autoplay":
+                autoplay = true
+            case let a where a.hasPrefix("--autoplay-interval="):
+                if let v = Double(String(a.dropFirst("--autoplay-interval=".count))), v > 0 {
+                    autoplayInterval = v
+                    autoplay = true
+                }
+            case "--autoplay-interval":
+                i += 1
+                if i < allArgs.count, let v = Double(allArgs[i]), v > 0 {
+                    autoplayInterval = v
+                    autoplay = true
+                }
             case "--version", "-v":
                 printVersion()
                 exit(0)
@@ -312,6 +333,9 @@ struct Config {
             extensionFilter: extensionFilter,
             excludedDirNames: excludedDirNames,
             excludedDirPaths: excludedDirPaths,
+            shuffle: shuffle,
+            autoplay: autoplay,
+            autoplayInterval: autoplayInterval,
             warmCache: warmCache,
             quiet: quiet,
             configFileLoaded: configFileLoaded,
@@ -411,6 +435,9 @@ struct Config {
           --include <exts>     Only show these extensions (e.g. --include=.jpg,.png)
           --exclude <exts>     Hide these extensions (e.g. --exclude=.svg,.pdf)
           --exclude-dir <dirs> Skip directories by name or path (e.g. node_modules,~/Photos/Trash)
+          --shuffle            Start with images in random order
+          --autoplay           Start slideshow (auto-advance images)
+          --autoplay-interval <sec>  Slideshow interval in seconds (default: 3, implies --autoplay)
           --quiet              Suppress startup config message
           --clean-thumbs       Delete thumbnail cache and exit
           --warm-cache         Pre-populate thumbnail/metadata cache headlessly and exit

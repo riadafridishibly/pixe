@@ -85,6 +85,9 @@ class InputHandler {
             renderer.updateInfoBar()
             view.needsDisplay = true
 
+        case "s":
+            renderer.toggleShuffle()
+
         case "m":
             renderer.generateMemoryReport()
 
@@ -348,6 +351,7 @@ class InputHandler {
             renderer.generateMemoryReport()
 
         case "g":
+            renderer.stopAutoplay()
             renderer.imageList.goFirst()
             renderer.loadCurrentImage()
 
@@ -355,11 +359,18 @@ class InputHandler {
             renderer.rotateCW()
             view.needsDisplay = true
 
+        case "s":
+            renderer.toggleShuffle()
+
+        case "a":
+            renderer.toggleAutoplay()
+
         case "y":
             renderer.copyCurrentImage()
 
         default:
             if event.characters == "G" {
+                renderer.stopAutoplay()
                 renderer.imageList.goLast()
                 renderer.loadCurrentImage()
             } else if event.characters == "Y" {
@@ -390,11 +401,13 @@ class InputHandler {
     }
 
     private func navigateNext(view: MTKView) {
+        renderer?.stopAutoplay()
         renderer?.imageList.goNext()
         renderer?.loadCurrentImage()
     }
 
     private func navigatePrevious(view: MTKView) {
+        renderer?.stopAutoplay()
         renderer?.imageList.goPrevious()
         renderer?.loadCurrentImage()
     }
