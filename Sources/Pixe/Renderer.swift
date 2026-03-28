@@ -1010,6 +1010,9 @@ class Renderer: NSObject, MTKViewDelegate {
         guard let commandBuffer = commandQueue.makeCommandBuffer(),
               let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: descriptor) else { return }
 
+        // Sync aspect ratios from cache so layout reflects actual image proportions
+        gridLayout.updateAspects(from: cache.aspects)
+
         let visible = gridLayout.visibleRange()
 
         // Draw selection border
@@ -1096,8 +1099,7 @@ class Renderer: NSObject, MTKViewDelegate {
 
             let ptr = buffer.contents().bindMemory(to: Uniforms.self, capacity: needed)
             for (slot, item) in visibleItems.enumerated() {
-                let aspect = cache.aspect(at: item.index)
-                ptr[slot] = Uniforms(transform: gridLayout.transformForIndex(item.index, imageAspect: aspect))
+                ptr[slot] = Uniforms(transform: gridLayout.transformForIndex(item.index))
             }
 
             for (slot, item) in visibleItems.enumerated() {
