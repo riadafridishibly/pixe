@@ -95,5 +95,39 @@ enum ShaderSource {
             return float4(brightness, brightness, brightness, 1.0);
         }
     }
+
+    // MARK: - Morph Effect on Selected Thumbnail
+
+    struct MorphUniforms {
+        float time;
+    };
+
+    fragment float4 morphThumbnailFragment(
+        VertexOut in [[stage_in]],
+        texture2d<float> texture [[texture(0)]],
+        sampler texSampler [[sampler(0)]],
+        constant MorphUniforms &morph [[buffer(0)]]
+    ) {
+        float2 uv = in.texCoord;
+        float t = morph.time;
+
+        // Subtle continuous wave wobble
+        uv.x += sin(uv.y * 8.0 + t * 1.5) * 0.003;
+        uv.y += cos(uv.x * 8.0 + t * 1.2) * 0.003;
+
+        // Occasional chromatic aberration pulse (peaks every ~4s)
+        float pulse = pow(max(0.0, sin(t * 0.8)), 12.0);
+        float aberration = pulse * 0.008;
+
+        float2 center = float2(0.5, 0.5);
+        float2 dir = uv - center;
+
+        float r = texture.sample(texSampler, uv + dir * aberration).r;
+        float g = texture.sample(texSampler, uv).g;
+        float b = texture.sample(texSampler, uv - dir * aberration).b;
+        float a = texture.sample(texSampler, uv).a;
+
+        return float4(r, g, b, a);
+    }
     """
 }

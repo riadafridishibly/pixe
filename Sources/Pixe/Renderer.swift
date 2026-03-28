@@ -42,6 +42,10 @@ struct SelectionUniforms {
     var effectType: Int32
 }
 
+struct MorphUniforms {
+    var time: Float
+}
+
 struct Vertex {
     var position: SIMD2<Float>
     var texCoord: SIMD2<Float>
@@ -53,6 +57,7 @@ class Renderer: NSObject, MTKViewDelegate {
     var pipelineState: MTLRenderPipelineState!
     var flatColorPipelineState: MTLRenderPipelineState!
     var selectionPipelineState: MTLRenderPipelineState!
+    var morphThumbnailPipelineState: MTLRenderPipelineState!
     var samplerState: MTLSamplerState!
     var vertexBuffer: MTLBuffer!
 
@@ -238,6 +243,20 @@ class Renderer: NSObject, MTKViewDelegate {
         selPipelineDescriptor.vertexDescriptor = vertexDescriptor
         selPipelineDescriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
         selectionPipelineState = try! device.makeRenderPipelineState(descriptor: selPipelineDescriptor)
+
+        // Morph thumbnail pipeline (animated texture effect on selected item)
+        let morphFunction = library.makeFunction(name: "morphThumbnailFragment")!
+        let morphPipelineDescriptor = MTLRenderPipelineDescriptor()
+        morphPipelineDescriptor.vertexFunction = vertexFunction
+        morphPipelineDescriptor.fragmentFunction = morphFunction
+        morphPipelineDescriptor.vertexDescriptor = vertexDescriptor
+        morphPipelineDescriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
+        morphPipelineDescriptor.colorAttachments[0].isBlendingEnabled = true
+        morphPipelineDescriptor.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
+        morphPipelineDescriptor.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
+        morphPipelineDescriptor.colorAttachments[0].sourceAlphaBlendFactor = .one
+        morphPipelineDescriptor.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
+        morphThumbnailPipelineState = try! device.makeRenderPipelineState(descriptor: morphPipelineDescriptor)
     }
 
     private func setupVertexBuffer() {
@@ -1173,9 +1192,30 @@ class Renderer: NSObject, MTKViewDelegate {
                 ptr[slot] = Uniforms(transform: gridLayout.transformForIndex(item.index))
             }
 
+            let animTime = Float(CACurrentMediaTime() - selectionAnimationStart)
+            let selIdx = gridLayout.selectedIndex
+            var selectedSlot: Int? = nil
+
+            // Draw non-selected thumbnails with normal pipeline
             for (slot, item) in visibleItems.enumerated() {
+                if item.index == selIdx {
+                    selectedSlot = slot
+                    continue
+                }
                 encoder.setVertexBuffer(buffer, offset: uniformStride * slot, index: 1)
                 encoder.setFragmentTexture(item.texture, index: 0)
+                encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
+            }
+
+            // Draw selected thumbnail with morph effect
+            if let slot = selectedSlot {
+                encoder.setRenderPipelineState(morphThumbnailPipelineState)
+                encoder.setFragmentSamplerState(samplerState, index: 0)
+                encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
+                encoder.setVertexBuffer(buffer, offset: uniformStride * slot, index: 1)
+                encoder.setFragmentTexture(visibleItems[slot].texture, index: 0)
+                var morph = MorphUniforms(time: animTime)
+                encoder.setFragmentBytes(&morph, length: MemoryLayout<MorphUniforms>.stride, index: 0)
                 encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
             }
         }
