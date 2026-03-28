@@ -42,8 +42,29 @@ struct SelectionUniforms {
     var effectType: Int32
 }
 
+enum MorphEffect: Int32 {
+    case wave = 0
+    case tvStatic = 1
+
+    static let allCases: [MorphEffect] = [.wave, .tvStatic]
+
+    func next() -> MorphEffect {
+        let cases = MorphEffect.allCases
+        let idx = cases.firstIndex(of: self)!
+        return cases[(idx + 1) % cases.count]
+    }
+
+    var label: String {
+        switch self {
+        case .wave: return "wave"
+        case .tvStatic: return "tv-static"
+        }
+    }
+}
+
 struct MorphUniforms {
     var time: Float
+    var effectType: Int32
 }
 
 struct Vertex {
@@ -80,6 +101,7 @@ class Renderer: NSObject, MTKViewDelegate {
     var thumbnailCache: ThumbnailCache?
     var backingScaleFactor: CGFloat = 2.0
     var selectionEffect: SelectionEffect = .rainbow
+    var morphEffect: MorphEffect = .tvStatic
     private var selectionAnimationStart: CFTimeInterval = CACurrentMediaTime()
     private var selectionAnimationTimer: DispatchSourceTimer?
 
@@ -953,6 +975,14 @@ class Renderer: NSObject, MTKViewDelegate {
         }
     }
 
+    func cycleMorphEffect() {
+        morphEffect = morphEffect.next()
+        updateInfoBar()
+        if let view = window?.contentView as? MTKView {
+            view.needsDisplay = true
+        }
+    }
+
     private func autoplayAdvance() {
         guard mode == .image else {
             stopAutoplay()
@@ -1214,7 +1244,7 @@ class Renderer: NSObject, MTKViewDelegate {
                 encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
                 encoder.setVertexBuffer(buffer, offset: uniformStride * slot, index: 1)
                 encoder.setFragmentTexture(visibleItems[slot].texture, index: 0)
-                var morph = MorphUniforms(time: animTime)
+                var morph = MorphUniforms(time: animTime, effectType: morphEffect.rawValue)
                 encoder.setFragmentBytes(&morph, length: MemoryLayout<MorphUniforms>.stride, index: 0)
                 encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
             }

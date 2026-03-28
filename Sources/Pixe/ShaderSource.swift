@@ -100,7 +100,15 @@ enum ShaderSource {
 
     struct MorphUniforms {
         float time;
+        int effectType;   // 0 = wave, 1 = tv static
     };
+
+    // Hash for procedural noise (TV static)
+    float hash21(float2 p) {
+        p = fract(p * float2(233.34, 851.73));
+        p += dot(p, p + 23.45);
+        return fract(p.x * p.y);
+    }
 
     fragment float4 morphThumbnailFragment(
         VertexOut in [[stage_in]],
@@ -111,11 +119,39 @@ enum ShaderSource {
         float2 uv = in.texCoord;
         float t = morph.time;
 
-        // Subtle continuous wave wobble
+        if (morph.effectType == 1) {
+            // TV Static: noise + scanlines + horizontal tear
+
+            // Horizontal tear — occasional row displacement
+            float tearStrength = pow(max(0.0, sin(t * 0.6)), 10.0);
+            float rowNoise = hash21(float2(floor(uv.y * 80.0), floor(t * 8.0)));
+            uv.x += (rowNoise - 0.5) * 0.06 * tearStrength;
+
+            // Jitter — subtle per-frame horizontal shake
+            uv.x += (hash21(float2(t * 13.0, 0.0)) - 0.5) * 0.002;
+
+            float4 color = texture.sample(texSampler, uv);
+
+            // Noise grain overlay
+            float noise = hash21(uv * 800.0 + t * 100.0);
+            color.rgb = mix(color.rgb, float3(noise), 0.08);
+
+            // Scanlines — darken every other pair of rows
+            float scanline = 0.92 + 0.08 * step(0.5, fract(uv.y * 150.0));
+            color.rgb *= scanline;
+
+            // Occasional snow burst (peaks every ~5s)
+            float snowPulse = pow(max(0.0, sin(t * 0.65)), 16.0);
+            float snow = hash21(uv * 400.0 + float2(t * 50.0, t * 37.0));
+            color.rgb = mix(color.rgb, float3(snow), snowPulse * 0.4);
+
+            return color;
+        }
+
+        // Wave: subtle wobble + occasional chromatic aberration
         uv.x += sin(uv.y * 8.0 + t * 1.5) * 0.003;
         uv.y += cos(uv.x * 8.0 + t * 1.2) * 0.003;
 
-        // Occasional chromatic aberration pulse (peaks every ~4s)
         float pulse = pow(max(0.0, sin(t * 0.8)), 12.0);
         float aberration = pulse * 0.008;
 
