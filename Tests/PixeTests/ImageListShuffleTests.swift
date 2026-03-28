@@ -24,7 +24,7 @@ final class ImageListShuffleTests: XCTestCase {
         let b = writeTestImage(named: "b.png")
         let c = writeTestImage(named: "c.png")
 
-        let config = Config.parse(["--quiet", "--no-cache", a, tempDirURL.path])
+        let config = Config.parse(["--quiet", "--no-cache", "--min-width=1", "--min-height=1", a, tempDirURL.path])
         let imageList = ImageList(arguments: config.imageArguments, config: config)
 
         imageList.shuffle()
@@ -42,7 +42,7 @@ final class ImageListShuffleTests: XCTestCase {
         let a = writeTestImage(named: "x.png")
         let b = writeTestImage(named: "y.png")
 
-        let config = Config.parse(["--quiet", "--no-cache", tempDirURL.path])
+        let config = Config.parse(["--quiet", "--no-cache", "--min-width=1", "--min-height=1", tempDirURL.path])
         let imageList = ImageList(arguments: config.imageArguments, config: config)
 
         XCTAssertEqual(imageList.count, 0)

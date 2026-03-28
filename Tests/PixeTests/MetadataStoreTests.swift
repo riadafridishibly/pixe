@@ -187,4 +187,97 @@ final class MetadataStoreTests: XCTestCase {
         XCTAssertEqual(dims?.width, 4000)
         XCTAssertEqual(dims?.height, 3000)
     }
+
+    // MARK: - Bulk Dimensions (bulkUpsertDimensions / bulkCachedDimensions)
+
+    func testBulkUpsertAndFetch() {
+        let entries: [(path: String, width: Int, height: Int)] = [
+            (path: "/a.jpg", width: 1920, height: 1080),
+            (path: "/b.jpg", width: 3840, height: 2160),
+            (path: "/c.jpg", width: 800, height: 600),
+        ]
+        store.bulkUpsertDimensions(entries: entries)
+
+        let result = store.bulkCachedDimensions(paths: ["/a.jpg", "/b.jpg", "/c.jpg"])
+        XCTAssertEqual(result.count, 3)
+        XCTAssertEqual(result["/a.jpg"]?.width, 1920)
+        XCTAssertEqual(result["/a.jpg"]?.height, 1080)
+        XCTAssertEqual(result["/b.jpg"]?.width, 3840)
+        XCTAssertEqual(result["/c.jpg"]?.height, 600)
+    }
+
+    func testBulkFetchMissing() {
+        let result = store.bulkCachedDimensions(paths: ["/nonexistent.jpg"])
+        XCTAssertTrue(result.isEmpty)
+    }
+
+    func testBulkFetchEmpty() {
+        let result = store.bulkCachedDimensions(paths: [])
+        XCTAssertTrue(result.isEmpty)
+    }
+
+    func testBulkUpsertEmpty() {
+        // Should not crash
+        store.bulkUpsertDimensions(entries: [])
+        let result = store.bulkCachedDimensions(paths: ["/a.jpg"])
+        XCTAssertTrue(result.isEmpty)
+    }
+
+    func testBulkUpsertOverwritesExisting() {
+        store.upsertDimensions(path: "/photo.jpg", width: 100, height: 100)
+
+        store.bulkUpsertDimensions(entries: [
+            (path: "/photo.jpg", width: 4000, height: 3000),
+        ])
+
+        let result = store.bulkCachedDimensions(paths: ["/photo.jpg"])
+        XCTAssertEqual(result["/photo.jpg"]?.width, 4000)
+        XCTAssertEqual(result["/photo.jpg"]?.height, 3000)
+    }
+
+    func testBulkFetchPartialHits() {
+        store.bulkUpsertDimensions(entries: [
+            (path: "/exists.jpg", width: 500, height: 400),
+        ])
+
+        let result = store.bulkCachedDimensions(paths: ["/exists.jpg", "/missing.jpg"])
+        XCTAssertEqual(result.count, 1)
+        XCTAssertNotNil(result["/exists.jpg"])
+        XCTAssertNil(result["/missing.jpg"])
+    }
+
+    func testBulkFetchCompatibleWithSingleUpsert() {
+        // Dimensions inserted with single upsert should be readable via bulk fetch
+        store.upsertDimensions(path: "/single.jpg", width: 1024, height: 768)
+
+        let result = store.bulkCachedDimensions(paths: ["/single.jpg"])
+        XCTAssertEqual(result["/single.jpg"]?.width, 1024)
+        XCTAssertEqual(result["/single.jpg"]?.height, 768)
+    }
+
+    func testBulkUpsertReadableBySingleFetch() {
+        // Dimensions inserted with bulk upsert should be readable via single fetch
+        store.bulkUpsertDimensions(entries: [
+            (path: "/bulk.jpg", width: 2048, height: 1536),
+        ])
+
+        let dims = store.cachedDimensions(path: "/bulk.jpg")
+        XCTAssertNotNil(dims)
+        XCTAssertEqual(dims?.width, 2048)
+        XCTAssertEqual(dims?.height, 1536)
+    }
+
+    func testBulkUpsertLargeBatch() {
+        // Test batching behavior (SQLite variable limit is 500 per batch)
+        let entries = (0 ..< 600).map { i in
+            (path: "/img\(i).jpg", width: 100 + i, height: 200 + i)
+        }
+        store.bulkUpsertDimensions(entries: entries)
+
+        let paths = entries.map(\.path)
+        let result = store.bulkCachedDimensions(paths: paths)
+        XCTAssertEqual(result.count, 600)
+        XCTAssertEqual(result["/img0.jpg"]?.width, 100)
+        XCTAssertEqual(result["/img599.jpg"]?.width, 699)
+    }
 }
