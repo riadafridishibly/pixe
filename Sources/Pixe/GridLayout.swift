@@ -75,7 +75,7 @@ class GridLayout {
         for (index, aspect) in newAspects {
             if skipLocked && aspectLocked.contains(index) { continue }
             ensureAspectsCapacity(index + 1)
-            if aspects[index] != aspect {
+            if abs(aspects[index] - aspect) > 0.001 {
                 aspects[index] = aspect
                 changed = true
             }

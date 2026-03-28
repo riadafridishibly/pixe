@@ -15,16 +15,13 @@ struct ColorUniforms {
     var color: SIMD4<Float>
 }
 
-enum SelectionEffect: Int32 {
+enum SelectionEffect: Int32, CaseIterable {
     case rainbow = 0
     case glow = 1
 
-    static let allCases: [SelectionEffect] = [.rainbow, .glow]
-
     func next() -> SelectionEffect {
-        let cases = SelectionEffect.allCases
-        let idx = cases.firstIndex(of: self)!
-        return cases[(idx + 1) % cases.count]
+        let cases = Self.allCases
+        return cases[(cases.firstIndex(of: self)! + 1) % cases.count]
     }
 
     var label: String {
@@ -42,16 +39,13 @@ struct SelectionUniforms {
     var effectType: Int32
 }
 
-enum MorphEffect: Int32 {
+enum MorphEffect: Int32, CaseIterable {
     case wave = 0
     case tvStatic = 1
 
-    static let allCases: [MorphEffect] = [.wave, .tvStatic]
-
     func next() -> MorphEffect {
-        let cases = MorphEffect.allCases
-        let idx = cases.firstIndex(of: self)!
-        return cases[(idx + 1) % cases.count]
+        let cases = Self.allCases
+        return cases[(cases.firstIndex(of: self)! + 1) % cases.count]
     }
 
     var label: String {
@@ -251,6 +245,9 @@ class Renderer: NSObject, MTKViewDelegate {
             var newDimensions: [(path: String, width: Int, height: Int)] = []
 
             for (i, path) in slice.enumerated() {
+                if i % 50 == 0, let self = self, self.aspectPreloadGeneration != generation {
+                    return
+                }
                 let dims = cached[path] ?? ImageLoader.imageDimensions(path: path)
                 guard let dims = dims else { continue }
                 let aspect = Float(dims.width) / max(Float(dims.height), 1.0)
@@ -1197,6 +1194,7 @@ class Renderer: NSObject, MTKViewDelegate {
         gridLayout.updateAspects(from: cache.aspects)
 
         let visible = gridLayout.visibleRange()
+        let animTime = Float(CACurrentMediaTime() - selectionAnimationStart)
 
         // Draw visible thumbnails — collect uniforms into a shared buffer
         encoder.setRenderPipelineState(pipelineState)
@@ -1258,7 +1256,6 @@ class Renderer: NSObject, MTKViewDelegate {
                 ptr[slot] = Uniforms(transform: gridLayout.transformForIndex(item.index))
             }
 
-            let animTime = Float(CACurrentMediaTime() - selectionAnimationStart)
             let selIdx = gridLayout.selectedIndex
             var selectedSlot: Int? = nil
 
@@ -1291,7 +1288,6 @@ class Renderer: NSObject, MTKViewDelegate {
             let selIdx = gridLayout.selectedIndex
             let (_, _, itemW, itemH) = gridLayout.itemRect(at: selIdx)
             let borderWidth: Float = 6.0
-            let animTime = Float(CACurrentMediaTime() - selectionAnimationStart)
 
             encoder.setRenderPipelineState(selectionPipelineState)
             encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)

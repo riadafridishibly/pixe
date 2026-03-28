@@ -397,6 +397,7 @@ final class MetadataStore {
             defer { sqlite3_finalize(stmt) }
 
             let now = Date().timeIntervalSince1970
+            var ok = true
             for entry in entries {
                 sqlite3_reset(stmt)
                 sqlite3_clear_bindings(stmt)
@@ -404,9 +405,12 @@ final class MetadataStore {
                 sqlite3_bind_int64(stmt, 2, Int64(entry.width))
                 sqlite3_bind_int64(stmt, 3, Int64(entry.height))
                 sqlite3_bind_double(stmt, 4, now)
-                _ = sqlite3_step(stmt)
+                if sqlite3_step(stmt) != SQLITE_DONE {
+                    ok = false
+                    break
+                }
             }
-            _ = exec("COMMIT;")
+            _ = exec(ok ? "COMMIT;" : "ROLLBACK;")
         }
     }
 
