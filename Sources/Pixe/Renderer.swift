@@ -818,7 +818,7 @@ class Renderer: NSObject, MTKViewDelegate {
         thumbnailCache?.invalidateAll()
         gridLayout.totalItems = imageList.count
         if mode == .thumbnail {
-            gridLayout.selectedIndex = 0
+            gridLayout.selectedIndex = imageList.currentIndex
             gridLayout.scrollToSelection()
         }
         prefetchCache.removeAll()
