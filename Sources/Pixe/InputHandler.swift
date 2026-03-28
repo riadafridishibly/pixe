@@ -91,6 +91,10 @@ class InputHandler {
         case "m":
             renderer.generateMemoryReport()
 
+        case "b":
+            renderer.cycleSelectionEffect()
+            view.needsDisplay = true
+
         case "+", "=":
             renderer.gridLayout.zoomBy(factor: 1.15)
             renderer.updateInfoBar()
