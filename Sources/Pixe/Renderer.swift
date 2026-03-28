@@ -91,7 +91,7 @@ class Renderer: NSObject, MTKViewDelegate {
     private var infoRestoreWorkItem: DispatchWorkItem?
     private var autoplayTimer: DispatchSourceTimer?
     private var startupAutoplayPending: Bool = false
-    var autoplayInterval: TimeInterval = 3.0
+    private var autoplayInterval: TimeInterval = 3.0
     var isAutoplayActive: Bool { autoplayTimer != nil }
     private let displayDecodeQueue = DispatchQueue(label: "pixe.display-decode", qos: .userInitiated)
     private let prefetchDecodeQueue = DispatchQueue(label: "pixe.prefetch-decode", qos: .utility, attributes: .concurrent)
@@ -106,6 +106,7 @@ class Renderer: NSObject, MTKViewDelegate {
         // Conservative default matching 800×600 window at 2× scale.
         // The real drawable size arrives via mtkView(_:drawableSizeWillChange:).
         viewportSize = SIMD2(1600, 1200)
+        autoplayInterval = config.autoplayInterval
         super.init()
         setupPipeline()
         setupVertexBuffer()
@@ -848,7 +849,7 @@ class Renderer: NSObject, MTKViewDelegate {
         guard mode == .image else { return }
         let timer = DispatchSource.makeTimerSource(queue: .main)
         autoplayTimer = timer
-        timer.schedule(deadline: .now() + autoplayInterval)
+        timer.schedule(deadline: .now() + autoplayInterval, repeating: autoplayInterval)
         timer.setEventHandler { [weak self] in
             self?.autoplayAdvance()
         }
@@ -856,8 +857,10 @@ class Renderer: NSObject, MTKViewDelegate {
     }
 
     func stopAutoplay() {
+        guard autoplayTimer != nil else { return }
         autoplayTimer?.cancel()
         autoplayTimer = nil
+        updateInfoBar()
     }
 
     private func autoplayAdvance() {
@@ -867,7 +870,6 @@ class Renderer: NSObject, MTKViewDelegate {
         }
         imageList.goNext()
         loadCurrentImage()
-        autoplayTimer?.schedule(deadline: .now() + autoplayInterval)
     }
 
     private func startPendingAutoplayIfPossible() {

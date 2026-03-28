@@ -30,9 +30,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         renderer = Renderer(device: device, imageList: imageList, initialMode: initialMode, config: config)
-        if config.autoplay {
-            renderer.autoplayInterval = config.autoplayInterval
-        }
 
         metalView = MetalImageView(frame: .zero, device: device)
         metalView.delegate = renderer
