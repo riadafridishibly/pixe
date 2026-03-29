@@ -129,6 +129,8 @@ class InputHandler {
                 view.needsDisplay = true
             } else if event.characters == "Y" {
                 renderer.copyCurrentImagePath()
+            } else if event.characters == "I" {
+                renderer.ignoreCurrentFolder()
             } else {
                 handleThumbnailArrowKeys(keyCode: event.keyCode, view: view)
             }
@@ -383,6 +385,8 @@ class InputHandler {
                 renderer.loadCurrentImage()
             } else if event.characters == "Y" {
                 renderer.copyCurrentImagePath()
+            } else if event.characters == "I" {
+                renderer.ignoreCurrentFolder()
             } else {
                 handleImageArrowKeys(keyCode: event.keyCode, view: view)
             }

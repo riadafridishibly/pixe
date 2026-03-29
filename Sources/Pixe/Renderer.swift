@@ -1106,6 +1106,54 @@ class Renderer: NSObject, MTKViewDelegate {
         }
     }
 
+    // MARK: - Ignore Folder
+
+    func ignoreCurrentFolder() {
+        let filePath: String?
+        let activeIndex: Int
+        switch mode {
+        case .thumbnail:
+            activeIndex = gridLayout.selectedIndex
+            guard activeIndex < imageList.allPaths.count else { return }
+            filePath = imageList.allPaths[activeIndex]
+        case .image:
+            activeIndex = imageList.currentIndex
+            filePath = imageList.currentPath
+        }
+        guard let filePath else { return }
+
+        let directory = (filePath as NSString).deletingLastPathComponent
+        let dirName = (directory as NSString).lastPathComponent
+        let removed = imageList.removePathsInDirectory(directory)
+        guard removed > 0 else { return }
+
+        if imageList.isEmpty {
+            NSApp.terminate(nil)
+            return
+        }
+
+        thumbnailCache?.invalidateAll()
+        gridLayout.resetAspects()
+        aspectPreloadedCount = 0
+        gridLayout.totalItems = imageList.count
+        preloadAspectsAsync(from: 0)
+        prefetchCache.removeAll()
+
+        switch mode {
+        case .thumbnail:
+            gridLayout.selectedIndex = min(activeIndex, imageList.count - 1)
+            gridLayout.scrollToSelection()
+        case .image:
+            loadCurrentImage()
+        }
+
+        updateWindowTitle()
+        showTemporaryInfo("Ignored \(dirName)/ (\(removed) images)")
+        if let view = window?.contentView as? MTKView {
+            view.needsDisplay = true
+        }
+    }
+
     // MARK: - Autoplay
 
     func enableStartupAutoplay() {

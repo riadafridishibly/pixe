@@ -703,4 +703,32 @@ class ImageList {
         }
         return removed
     }
+
+    func removePathsInDirectory(_ directory: String) -> Int {
+        let normalizedDir = directory.hasSuffix("/") ? String(directory.dropLast()) : directory
+        let prefix = normalizedDir + "/"
+
+        let countBefore = paths.count
+        paths.removeAll { path in
+            guard path.hasPrefix(prefix) else { return false }
+            deletedPaths.insert(path)
+            knownPaths.remove(path)
+            exifDateCache.removeValue(forKey: path)
+            return true
+        }
+        let removedCount = countBefore - paths.count
+        guard removedCount > 0 else { return 0 }
+
+        if var original = originalPaths {
+            original.removeAll { $0.hasPrefix(prefix) }
+            originalPaths = original
+        }
+
+        if paths.isEmpty {
+            currentIndex = 0
+        } else {
+            currentIndex = min(currentIndex, paths.count - 1)
+        }
+        return removedCount
+    }
 }
