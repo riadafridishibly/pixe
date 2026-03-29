@@ -90,6 +90,7 @@ pixe [options] <image|directory> ...
 | `--shuffle` | Start with images in random order |
 | `--autoplay` | Start slideshow (auto-advance images) |
 | `--autoplay-interval <sec>` | Slideshow interval in seconds (default: 3, implies `--autoplay`) |
+| `--config <path>` | Config file path (default: `~/.config/pixe/config`, `NONE` to skip) |
 | `--quiet` | Suppress startup config message |
 | `--warm-cache` | Pre-populate thumbnail/metadata cache headlessly and exit |
 | `--clean-thumbs` | Delete thumbnail cache and exit |

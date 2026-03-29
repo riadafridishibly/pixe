@@ -75,8 +75,7 @@ struct Config {
         return (home as NSString).appendingPathComponent(".config/pixe/config")
     }()
 
-    private static func loadConfigFileArgs() -> (args: [String], loaded: Bool) {
-        let path = configFilePath
+    private static func loadConfigFileArgs(from path: String) -> (args: [String], loaded: Bool) {
         guard FileManager.default.fileExists(atPath: path) else {
             return ([], false)
         }
@@ -115,8 +114,33 @@ struct Config {
         return (args, true)
     }
 
+    private static func resolveConfigPath(_ args: [String]) -> String? {
+        var i = 0
+        while i < args.count {
+            let arg = args[i]
+            if arg.hasPrefix("--config=") {
+                let value = String(arg.dropFirst("--config=".count))
+                return value.uppercased() == "NONE" ? nil : (value as NSString).expandingTildeInPath
+            } else if arg == "--config" {
+                i += 1
+                if i < args.count {
+                    let value = args[i]
+                    return value.uppercased() == "NONE" ? nil : (value as NSString).expandingTildeInPath
+                }
+            }
+            i += 1
+        }
+        return configFilePath
+    }
+
     static func parse(_ args: [String] = Array(CommandLine.arguments.dropFirst())) -> Config {
-        let (configFileArgs, configFileLoaded) = loadConfigFileArgs()
+        let configPath = resolveConfigPath(args)
+        let (configFileArgs, configFileLoaded): ([String], Bool)
+        if let path = configPath {
+            (configFileArgs, configFileLoaded) = loadConfigFileArgs(from: path)
+        } else {
+            (configFileArgs, configFileLoaded) = ([], false)
+        }
         let allArgs = configFileArgs + args
 
         var thumbDir = defaultThumbDir
@@ -312,6 +336,10 @@ struct Config {
                     autoplayInterval = v
                     autoplay = true
                 }
+            case let a where a.hasPrefix("--config="):
+                break  // already handled in pre-scan
+            case "--config":
+                i += 1  // already handled in pre-scan, skip value
             case "--version", "-v":
                 printVersion()
                 exit(0)
@@ -456,6 +484,7 @@ struct Config {
           --shuffle            Start with images in random order
           --autoplay           Start slideshow (auto-advance images)
           --autoplay-interval <sec>  Slideshow interval in seconds (default: 3, implies --autoplay)
+          --config <path>      Config file path (default: ~/.config/pixe/config, NONE to skip)
           --quiet              Suppress startup config message
           --clean-thumbs       Delete thumbnail cache and exit
           --warm-cache         Pre-populate thumbnail/metadata cache headlessly and exit
