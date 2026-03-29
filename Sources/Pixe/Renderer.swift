@@ -97,7 +97,7 @@ class Renderer: NSObject, MTKViewDelegate {
     }
 
     // Grid
-    let gridLayout = GridLayout()
+    let gridLayout: GridLayout
     var thumbnailCache: ThumbnailCache?
     private let aspectPreloadQueue = DispatchQueue(label: "pixe.aspect-preload", qos: .userInitiated)
     private var aspectPreloadGeneration = 0
@@ -176,6 +176,11 @@ class Renderer: NSObject, MTKViewDelegate {
         // The real drawable size arrives via mtkView(_:drawableSizeWillChange:).
         viewportSize = SIMD2(1600, 1200)
         autoplayInterval = config.autoplayInterval
+        if let displaySize = config.thumbDisplaySize {
+            gridLayout = GridLayout(defaultSize: Float(displaySize))
+        } else {
+            gridLayout = GridLayout()
+        }
         gridLayout.padding = config.gap
         if let name = config.selectionEffect,
            let effect = SelectionEffect.allCases.first(where: { $0.label == name }) {
