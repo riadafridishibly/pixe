@@ -52,12 +52,65 @@ enum ShaderSource {
         float time;
         float2 rectSize;      // quad size in points
         float borderWidth;    // border thickness in points
-        int effectType;       // 0 = rainbow, 1 = glow, 2 = solid skyblue
+        int effectType;       // 0 = rainbow, 1 = glow, 2 = solid skyblue, 3 = fire
+        float2 innerOffset;   // offset to inner rect within expanded quad
+        float2 innerSize;     // size of the inner rect
     };
 
     float3 hsv2rgb(float3 c) {
         float3 p = abs(fract(float3(c.x) + float3(1.0, 2.0/3.0, 1.0/3.0)) * 6.0 - 3.0);
         return c.z * mix(float3(1.0), clamp(p - 1.0, 0.0, 1.0), c.y);
+    }
+
+    // --- Value noise helpers for fire effect (double-FBM distortion) ---
+    float fireRand(float2 n) {
+        return fract(cos(dot(n, float2(12.9898, 4.1414))) * 43758.5453);
+    }
+
+    float fireNoise(float2 n) {
+        float2 d = float2(0.0, 1.0);
+        float2 b = floor(n);
+        float2 f = smoothstep(float2(0.0), float2(1.0), fract(n));
+        return mix(mix(fireRand(b), fireRand(b + d.yx), f.x),
+                   mix(fireRand(b + d.xy), fireRand(b + d.yy), f.x), f.y);
+    }
+
+    float fireFbm(float2 n) {
+        float total = 0.0, amplitude = 1.0;
+        for (int i = 0; i < 4; i++) {
+            total += fireNoise(n) * amplitude;
+            n += n;
+            amplitude *= 0.5;
+        }
+        return total;
+    }
+
+    // Organic fire via double-FBM turbulence with rich color mixing.
+    // uv.x: position along edge; uv.y: 0 at inner edge, 1 at outer tip.
+    float4 computeFlame(float2 uv, float time) {
+        float3 c1 = float3(0.5, 0.0, 0.1);
+        float3 c2 = float3(0.9, 0.1, 0.0);
+        float3 c3 = float3(0.2, 0.0, 0.0);
+        float3 c4 = float3(1.0, 0.9, 0.0);
+        float3 c5 = float3(0.1);
+        float3 c6 = float3(0.9);
+
+        float2 speed = float2(0.7, 0.4);
+
+        // Map along-edge to a circle for seamless tiling around the border
+        float theta = uv.x * 2.0 * M_PI_F;
+        float2 p = float2(cos(theta), sin(theta)) * (1.3 + uv.y * 3.0);
+
+        float q = fireFbm(p - time * 0.1);
+        float2 r = float2(fireFbm(p + q + time * speed.x - p.x - p.y),
+                           fireFbm(p + q - time * speed.y));
+        float3 c = mix(c1, c2, fireFbm(p + r)) + mix(c3, c4, r.x) - mix(c5, c6, r.y);
+        c = max(c, float3(0.0));  // clamp out dark shadows without changing the palette
+
+        float fade = cos(1.6 * uv.y);
+        c *= fade;
+        float alpha = clamp(fade, 0.0, 1.0);
+        return float4(clamp(c, 0.0, 1.0), alpha);
     }
 
     fragment float4 selectionFragment(
@@ -71,7 +124,7 @@ enum ShaderSource {
         float distBottom = sel.rectSize.y - pixelPos.y;
         float distFromEdge = min(min(distLeft, distRight), min(distTop, distBottom));
 
-        if (distFromEdge >= sel.borderWidth) {
+        if (sel.effectType != 3 && distFromEdge >= sel.borderWidth) {
             // Inside thumbnail area — transparent so thumbnail shows through
             return float4(0.0, 0.0, 0.0, 0.0);
         }
@@ -93,9 +146,34 @@ enum ShaderSource {
             float pulse = 0.5 + 0.5 * sin(sel.time * 3.0);
             float brightness = mix(0.4, 1.0, edgeFactor * pulse);
             return float4(brightness, brightness, brightness, 1.0);
-        } else {
+        } else if (sel.effectType == 2) {
             // Solid skyblue (#87CEEB)
             return float4(0.529, 0.808, 0.922, 1.0);
+        } else {
+            // Fire: organic double-FBM fire around the border
+            float2 innerMin = sel.innerOffset;
+            float2 innerMax = sel.innerOffset + sel.innerSize;
+
+            // Inside thumbnail — transparent
+            if (pixelPos.x >= innerMin.x && pixelPos.x <= innerMax.x &&
+                pixelPos.y >= innerMin.y && pixelPos.y <= innerMax.y) {
+                return float4(0.0, 0.0, 0.0, 0.0);
+            }
+
+            // Distance from inner rect edge
+            float dL = max(0.0, innerMin.x - pixelPos.x);
+            float dR = max(0.0, pixelPos.x - innerMax.x);
+            float dT = max(0.0, innerMin.y - pixelPos.y);
+            float dB = max(0.0, pixelPos.y - innerMax.y);
+            float outDist = max(max(dL, dR), max(dT, dB));
+            float normalizedDist = 1.0 - clamp(outDist / sel.innerOffset.x, 0.0, 1.0);
+
+            // Angle-based along-edge coordinate for smooth continuity
+            float2 center = (innerMin + innerMax) * 0.5;
+            float angle = atan2(pixelPos.y - center.y, pixelPos.x - center.x);
+            float along = (angle + M_PI_F) / (2.0 * M_PI_F);
+
+            return computeFlame(float2(along, normalizedDist), sel.time);
         }
     }
 
