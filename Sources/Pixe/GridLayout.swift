@@ -153,7 +153,8 @@ class GridLayout {
             } else {
                 scale = rowNaturalWidth > 0 ? min(1.0, imageSpace / rowNaturalWidth) : 1.0
             }
-            let rowHeight = targetHeight * scale
+            let maxRowHeight = viewportHeight * 0.7
+            let rowHeight = min(targetHeight * scale, maxRowHeight)
 
             // Position each item in the row
             var x = margin
