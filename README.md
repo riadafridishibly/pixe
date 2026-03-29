@@ -86,6 +86,7 @@ pixe [options] <image|directory> ...
 | `--exclude <exts>` | Hide these extensions (last one wins if both `--include` and `--exclude` are set) |
 | `--exclude-dir <dirs>` | Skip directories by name or path (e.g. `node_modules,~/Photos/Trash`) |
 | `--gap <points>` | Gap between thumbnails in points (default: 2, min: 0) |
+| `--selection-effect <name>` | Selection border style: `rainbow`, `glow`, `solid` (default: rainbow) |
 | `--shuffle` | Start with images in random order |
 | `--autoplay` | Start slideshow (auto-advance images) |
 | `--autoplay-interval <sec>` | Slideshow interval in seconds (default: 3, implies `--autoplay`) |
@@ -151,6 +152,10 @@ pixe --autoplay-interval 5 ~/Pictures # Slideshow with 5s interval
 | `d` | Delete image (move to trash) |
 | `o` | Reveal in Finder |
 | `s` | Toggle shuffle (randomize order) |
+| `b` | Cycle selection effect (rainbow → glow → solid) |
+| `v` | Cycle morph effect |
+| `y` | Copy image to clipboard |
+| `Y` | Copy image path to clipboard |
 | `i` | Toggle image info |
 | `f` | Toggle fullscreen |
 | `m` | Memory profiler |
@@ -172,6 +177,8 @@ pixe --autoplay-interval 5 ~/Pictures # Slideshow with 5s interval
 | `o` | Reveal in Finder |
 | `s` | Toggle shuffle (randomize order) |
 | `a` | Toggle autoplay (slideshow) |
+| `y` | Copy image to clipboard |
+| `Y` | Copy image path to clipboard |
 | `i` | Toggle image info |
 | `f` | Toggle fullscreen |
 | `m` | Memory profiler |
