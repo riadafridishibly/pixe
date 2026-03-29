@@ -698,6 +698,7 @@ class Renderer: NSObject, MTKViewDelegate {
 
     func rotateCW() {
         rotationSteps = (rotationSteps + 1) % 4
+        if rotationSteps != 0 { finishStripAnimation() }
     }
 
     // MARK: - Strip Animation
@@ -1205,7 +1206,6 @@ class Renderer: NSObject, MTKViewDelegate {
         thumbnailGIFPath = nil
         stopSelectionAnimation()
         finishStripAnimation()
-        stripOffset = 0
         imageList.goTo(index: index)
         mode = .image
         // Pre-set thumbnail as placeholder to avoid black flash
@@ -1253,10 +1253,12 @@ class Renderer: NSObject, MTKViewDelegate {
     func zoomBy(factor: Float) {
         scale *= factor
         scale = max(0.1, min(scale, 50.0))
+        if scale > 1.0 { finishStripAnimation() }
     }
 
     func setScale(_ newScale: Float) {
         scale = max(0.1, min(newScale, 50.0))
+        if scale > 1.0 { finishStripAnimation() }
     }
 
     func panBy(dx: Float, dy: Float) {

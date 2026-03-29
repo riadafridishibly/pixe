@@ -409,12 +409,13 @@ class InputHandler {
     }
 
     private func navigate(direction: Int, view: MTKView) {
-        renderer?.stopAutoplay()
-        if renderer?.config.strip == true && renderer?.scale ?? 1.0 <= 1.0 && renderer?.rotationSteps == 0 {
-            renderer?.navigateWithStripAnimation(direction: direction)
+        guard let renderer = renderer else { return }
+        renderer.stopAutoplay()
+        if renderer.config.strip && renderer.scale <= 1.0 && renderer.rotationSteps == 0 {
+            renderer.navigateWithStripAnimation(direction: direction)
         } else {
-            if direction > 0 { renderer?.imageList.goNext() } else { renderer?.imageList.goPrevious() }
-            renderer?.loadCurrentImage()
+            if direction > 0 { renderer.imageList.goNext() } else { renderer.imageList.goPrevious() }
+            renderer.loadCurrentImage()
         }
     }
 
