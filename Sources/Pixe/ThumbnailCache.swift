@@ -88,7 +88,7 @@ class ThumbnailCache {
     // Disk cache
     private let diskCacheEnabled: Bool
     private let thumbDir: String
-    private let metadataStore: MetadataStore?
+    let metadataStore: MetadataStore?
 
     // Concurrency
     private let loadQueue = DispatchQueue(label: "pixe.thumbnail", qos: .utility, attributes: .concurrent)

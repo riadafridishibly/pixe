@@ -13,7 +13,8 @@ Pixe handles thousands of images efficiently with smart memory management, thumb
 
 ## Features
 
-- **Thumbnail grid** with keyboard navigation and smooth scrolling
+- **Justified row-based thumbnail grid** — images keep their aspect ratio, packed into rows like a photo gallery
+- **Animated selection effects** — rainbow glow border and TV-static morph on the selected thumbnail
 - **Full image viewer** with zoom, pan, and prefetching
 - **RAW support** — ARW, CR2, CR3, NEF, RAF, ORF, RW2, DNG, PEF, SRW, X3F (instant embedded preview, full decode in background)
 - **Display-resolution aware loading** — images downsampled to viewport size to keep memory bounded
@@ -84,6 +85,7 @@ pixe [options] <image|directory> ...
 | `--include <exts>` | Only show these extensions (e.g. `jpg,png`) |
 | `--exclude <exts>` | Hide these extensions (last one wins if both `--include` and `--exclude` are set) |
 | `--exclude-dir <dirs>` | Skip directories by name or path (e.g. `node_modules,~/Photos/Trash`) |
+| `--gap <points>` | Gap between thumbnails in points (default: 2, min: 0) |
 | `--shuffle` | Start with images in random order |
 | `--autoplay` | Start slideshow (auto-advance images) |
 | `--autoplay-interval <sec>` | Slideshow interval in seconds (default: 3, implies `--autoplay`) |

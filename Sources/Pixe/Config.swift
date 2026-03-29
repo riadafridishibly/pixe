@@ -55,6 +55,8 @@ struct Config {
     let autoplay: Bool
     let autoplayInterval: TimeInterval
     let warmCache: Bool
+    let gap: Float
+    let selectionEffect: String?
     let quiet: Bool
     let configFileLoaded: Bool
     let configFileFlags: [String]
@@ -134,6 +136,8 @@ struct Config {
         var shuffle = false
         var autoplay = false
         var autoplayInterval: TimeInterval = 3.0
+        var gap: Float = 2.0
+        var selectionEffect: String?
         var imageArguments: [String] = []
         var includeExts: Set<String>?
         var excludeExts: Set<String>?
@@ -285,6 +289,16 @@ struct Config {
                 }
             case "--shuffle":
                 shuffle = true
+            case let a where a.hasPrefix("--gap="):
+                if let v = Float(String(a.dropFirst("--gap=".count))), v >= 0 { gap = v }
+            case "--gap":
+                i += 1
+                if i < allArgs.count, let v = Float(allArgs[i]), v >= 0 { gap = v }
+            case let a where a.hasPrefix("--selection-effect="):
+                selectionEffect = String(a.dropFirst("--selection-effect=".count))
+            case "--selection-effect":
+                i += 1
+                if i < allArgs.count { selectionEffect = allArgs[i] }
             case "--autoplay":
                 autoplay = true
             case let a where a.hasPrefix("--autoplay-interval="):
@@ -337,6 +351,8 @@ struct Config {
             autoplay: autoplay,
             autoplayInterval: autoplayInterval,
             warmCache: warmCache,
+            gap: gap,
+            selectionEffect: selectionEffect,
             quiet: quiet,
             configFileLoaded: configFileLoaded,
             configFileFlags: configFileArgs,
@@ -435,6 +451,8 @@ struct Config {
           --include <exts>     Only show these extensions (e.g. --include=.jpg,.png)
           --exclude <exts>     Hide these extensions (e.g. --exclude=.svg,.pdf)
           --exclude-dir <dirs> Skip directories by name or path (e.g. node_modules,~/Photos/Trash)
+          --gap <points>       Gap between thumbnails in points (default: 2, min: 0)
+          --selection-effect <name>  Selection border style: rainbow, glow, solid (default: rainbow)
           --shuffle            Start with images in random order
           --autoplay           Start slideshow (auto-advance images)
           --autoplay-interval <sec>  Slideshow interval in seconds (default: 3, implies --autoplay)

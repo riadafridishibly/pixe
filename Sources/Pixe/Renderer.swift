@@ -15,6 +15,54 @@ struct ColorUniforms {
     var color: SIMD4<Float>
 }
 
+enum SelectionEffect: Int32, CaseIterable {
+    case rainbow = 0
+    case glow = 1
+    case solid = 2
+
+    func next() -> SelectionEffect {
+        let cases = Self.allCases
+        return cases[(cases.firstIndex(of: self)! + 1) % cases.count]
+    }
+
+    var label: String {
+        switch self {
+        case .rainbow: return "rainbow"
+        case .glow: return "glow"
+        case .solid: return "solid"
+        }
+    }
+}
+
+struct SelectionUniforms {
+    var time: Float
+    var rectSize: SIMD2<Float>
+    var borderWidth: Float
+    var effectType: Int32
+}
+
+enum MorphEffect: Int32, CaseIterable {
+    case wave = 0
+    case tvStatic = 1
+
+    func next() -> MorphEffect {
+        let cases = Self.allCases
+        return cases[(cases.firstIndex(of: self)! + 1) % cases.count]
+    }
+
+    var label: String {
+        switch self {
+        case .wave: return "wave"
+        case .tvStatic: return "tv-static"
+        }
+    }
+}
+
+struct MorphUniforms {
+    var time: Float
+    var effectType: Int32
+}
+
 struct Vertex {
     var position: SIMD2<Float>
     var texCoord: SIMD2<Float>
@@ -25,6 +73,8 @@ class Renderer: NSObject, MTKViewDelegate {
     let commandQueue: MTLCommandQueue
     var pipelineState: MTLRenderPipelineState!
     var flatColorPipelineState: MTLRenderPipelineState!
+    var selectionPipelineState: MTLRenderPipelineState!
+    var morphThumbnailPipelineState: MTLRenderPipelineState!
     var samplerState: MTLSamplerState!
     var vertexBuffer: MTLBuffer!
 
@@ -45,7 +95,14 @@ class Renderer: NSObject, MTKViewDelegate {
     // Grid
     let gridLayout = GridLayout()
     var thumbnailCache: ThumbnailCache?
+    private let aspectPreloadQueue = DispatchQueue(label: "pixe.aspect-preload", qos: .userInitiated)
+    private var aspectPreloadGeneration = 0
+    private var aspectPreloadedCount = 0
     var backingScaleFactor: CGFloat = 2.0
+    var selectionEffect: SelectionEffect = .rainbow
+    var morphEffect: MorphEffect = .tvStatic
+    private var selectionAnimationStart: CFTimeInterval = CACurrentMediaTime()
+    private var selectionAnimationTimer: DispatchSourceTimer?
 
     // Thumbnail uniform buffer
     private let thumbnailFramesInFlight = 3
@@ -107,6 +164,11 @@ class Renderer: NSObject, MTKViewDelegate {
         // The real drawable size arrives via mtkView(_:drawableSizeWillChange:).
         viewportSize = SIMD2(1600, 1200)
         autoplayInterval = config.autoplayInterval
+        gridLayout.padding = config.gap
+        if let name = config.selectionEffect,
+           let effect = SelectionEffect.allCases.first(where: { $0.label == name }) {
+            selectionEffect = effect
+        }
         super.init()
         setupPipeline()
         setupVertexBuffer()
@@ -115,6 +177,11 @@ class Renderer: NSObject, MTKViewDelegate {
         if hasMultipleImages || imageList.hasDirectoryArguments {
             thumbnailCache = ThumbnailCache(device: device, config: config)
             gridLayout.totalItems = imageList.count
+            preloadAspectsAsync()
+        }
+
+        if mode == .thumbnail {
+            startSelectionAnimation()
         }
 
         setupEnumerationCallbacks()
@@ -127,6 +194,7 @@ class Renderer: NSObject, MTKViewDelegate {
             if self.thumbnailCache == nil {
                 self.thumbnailCache = ThumbnailCache(device: self.device, config: self.config)
             }
+            self.preloadAspectsAsync()
             self.updateWindowTitle()
             self.startPendingAutoplayIfPossible()
             if let view = self.window?.contentView as? MTKView {
@@ -149,12 +217,62 @@ class Renderer: NSObject, MTKViewDelegate {
             self.thumbnailGIFAnimator = nil
             self.thumbnailGIFPath = nil
             self.thumbnailCache?.invalidateAll()
+            self.gridLayout.resetAspects()
+            self.aspectPreloadedCount = 0
             self.gridLayout.totalItems = self.imageList.count
             self.gridLayout.clampScroll()
+            self.preloadAspectsAsync(from: 0)
             self.updateWindowTitle()
             self.startPendingAutoplayIfPossible()
             if let view = self.window?.contentView as? MTKView {
                 view.needsDisplay = true
+            }
+        }
+    }
+
+    /// Preload aspect ratios on a background thread so the layout is stable
+    /// before thumbnails appear. Only processes paths added since the last call.
+    private func preloadAspectsAsync(from startIndex: Int? = nil) {
+        let start = startIndex ?? aspectPreloadedCount
+        let paths = imageList.allPaths
+        guard start < paths.count else { return }
+        aspectPreloadedCount = paths.count
+
+        aspectPreloadGeneration += 1
+        let generation = aspectPreloadGeneration
+        let store = thumbnailCache?.metadataStore
+        let slice = Array(paths[start...])
+
+        aspectPreloadQueue.async { [weak self] in
+            let cached = store?.bulkCachedDimensions(paths: slice) ?? [:]
+
+            var aspects: [Int: Float] = [:]
+            aspects.reserveCapacity(slice.count)
+            var newDimensions: [(path: String, width: Int, height: Int)] = []
+
+            for (i, path) in slice.enumerated() {
+                if i % 50 == 0, let self = self, self.aspectPreloadGeneration != generation {
+                    return
+                }
+                let dims = cached[path] ?? ImageLoader.imageDimensions(path: path)
+                guard let dims = dims else { continue }
+                let aspect = Float(dims.width) / max(Float(dims.height), 1.0)
+                aspects[start + i] = aspect
+                if cached[path] == nil {
+                    newDimensions.append((path: path, width: dims.width, height: dims.height))
+                }
+            }
+
+            if !newDimensions.isEmpty {
+                store?.bulkUpsertDimensions(entries: newDimensions)
+            }
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self, self.aspectPreloadGeneration == generation else { return }
+                self.gridLayout.setPreloadedAspects(aspects)
+                if let view = self.window?.contentView as? MTKView {
+                    view.needsDisplay = true
+                }
             }
         }
     }
@@ -194,6 +312,34 @@ class Renderer: NSObject, MTKViewDelegate {
         flatPipelineDescriptor.vertexDescriptor = vertexDescriptor
         flatPipelineDescriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
         flatColorPipelineState = try! device.makeRenderPipelineState(descriptor: flatPipelineDescriptor)
+
+        // Selection border pipeline (animated)
+        let selectionFunction = library.makeFunction(name: "selectionFragment")!
+        let selPipelineDescriptor = MTLRenderPipelineDescriptor()
+        selPipelineDescriptor.vertexFunction = vertexFunction
+        selPipelineDescriptor.fragmentFunction = selectionFunction
+        selPipelineDescriptor.vertexDescriptor = vertexDescriptor
+        selPipelineDescriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
+        selPipelineDescriptor.colorAttachments[0].isBlendingEnabled = true
+        selPipelineDescriptor.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
+        selPipelineDescriptor.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
+        selPipelineDescriptor.colorAttachments[0].sourceAlphaBlendFactor = .sourceAlpha
+        selPipelineDescriptor.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
+        selectionPipelineState = try! device.makeRenderPipelineState(descriptor: selPipelineDescriptor)
+
+        // Morph thumbnail pipeline (animated texture effect on selected item)
+        let morphFunction = library.makeFunction(name: "morphThumbnailFragment")!
+        let morphPipelineDescriptor = MTLRenderPipelineDescriptor()
+        morphPipelineDescriptor.vertexFunction = vertexFunction
+        morphPipelineDescriptor.fragmentFunction = morphFunction
+        morphPipelineDescriptor.vertexDescriptor = vertexDescriptor
+        morphPipelineDescriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
+        morphPipelineDescriptor.colorAttachments[0].isBlendingEnabled = true
+        morphPipelineDescriptor.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
+        morphPipelineDescriptor.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
+        morphPipelineDescriptor.colorAttachments[0].sourceAlphaBlendFactor = .one
+        morphPipelineDescriptor.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
+        morphThumbnailPipelineState = try! device.makeRenderPipelineState(descriptor: morphPipelineDescriptor)
     }
 
     private func setupVertexBuffer() {
@@ -816,7 +962,10 @@ class Renderer: NSObject, MTKViewDelegate {
             imageList.shuffle()
         }
         thumbnailCache?.invalidateAll()
+        gridLayout.resetAspects()
+        aspectPreloadedCount = 0
         gridLayout.totalItems = imageList.count
+        preloadAspectsAsync(from: 0)
         if mode == .thumbnail {
             gridLayout.selectedIndex = imageList.currentIndex
             gridLayout.scrollToSelection()
@@ -863,6 +1012,41 @@ class Renderer: NSObject, MTKViewDelegate {
         updateInfoBar()
     }
 
+    func startSelectionAnimation() {
+        guard selectionAnimationTimer == nil else { return }
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now(), repeating: 1.0 / 30.0)
+        timer.setEventHandler { [weak self] in
+            guard let self = self, self.mode == .thumbnail else { return }
+            if let view = self.window?.contentView as? MTKView {
+                view.needsDisplay = true
+            }
+        }
+        timer.resume()
+        selectionAnimationTimer = timer
+    }
+
+    func stopSelectionAnimation() {
+        selectionAnimationTimer?.cancel()
+        selectionAnimationTimer = nil
+    }
+
+    func cycleSelectionEffect() {
+        selectionEffect = selectionEffect.next()
+        updateInfoBar()
+        if let view = window?.contentView as? MTKView {
+            view.needsDisplay = true
+        }
+    }
+
+    func cycleMorphEffect() {
+        morphEffect = morphEffect.next()
+        updateInfoBar()
+        if let view = window?.contentView as? MTKView {
+            view.needsDisplay = true
+        }
+    }
+
     private func autoplayAdvance() {
         guard mode == .image else {
             stopAutoplay()
@@ -892,6 +1076,7 @@ class Renderer: NSObject, MTKViewDelegate {
         thumbnailGIFAnimator?.stop()
         thumbnailGIFAnimator = nil
         thumbnailGIFPath = nil
+        stopSelectionAnimation()
         imageList.goTo(index: index)
         mode = .image
         // Pre-set thumbnail as placeholder to avoid black flash
@@ -904,6 +1089,7 @@ class Renderer: NSObject, MTKViewDelegate {
         guard hasMultipleImages else { return }
         stopAutoplay()
         mode = .thumbnail
+        startSelectionAnimation()
         gridLayout.selectedIndex = imageList.currentIndex
         currentTexture = nil
         gifAnimator?.stop()
@@ -1010,34 +1196,11 @@ class Renderer: NSObject, MTKViewDelegate {
         guard let commandBuffer = commandQueue.makeCommandBuffer(),
               let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: descriptor) else { return }
 
+        // Sync aspect ratios from cache so layout reflects actual image proportions
+        gridLayout.updateAspects(from: cache.aspects)
+
         let visible = gridLayout.visibleRange()
-
-        // Draw selection border
-        if visible.contains(gridLayout.selectedIndex) {
-            encoder.setRenderPipelineState(flatColorPipelineState)
-            encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
-
-            // White outer outline
-            var outerTransform = Uniforms(transform: gridLayout.outerHighlightTransformForIndex(gridLayout.selectedIndex))
-            encoder.setVertexBytes(&outerTransform, length: MemoryLayout<Uniforms>.stride, index: 1)
-            var outerColor = ColorUniforms(color: SIMD4<Float>(1.0, 1.0, 1.0, 1.0))
-            encoder.setFragmentBytes(&outerColor, length: MemoryLayout<ColorUniforms>.stride, index: 0)
-            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
-
-            // Black inner border
-            var highlightTransform = Uniforms(transform: gridLayout.highlightTransformForIndex(gridLayout.selectedIndex))
-            encoder.setVertexBytes(&highlightTransform, length: MemoryLayout<Uniforms>.stride, index: 1)
-            var borderColor = ColorUniforms(color: SIMD4<Float>(0.0, 0.0, 0.0, 1.0))
-            encoder.setFragmentBytes(&borderColor, length: MemoryLayout<ColorUniforms>.stride, index: 0)
-            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
-
-            // Cell background to create border effect
-            var cellTransform = Uniforms(transform: gridLayout.cellTransformForIndex(gridLayout.selectedIndex))
-            encoder.setVertexBytes(&cellTransform, length: MemoryLayout<Uniforms>.stride, index: 1)
-            var bgColor = ColorUniforms(color: SIMD4<Float>(0.08, 0.08, 0.08, 1.0))
-            encoder.setFragmentBytes(&bgColor, length: MemoryLayout<ColorUniforms>.stride, index: 0)
-            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
-        }
+        let animTime = Float(CACurrentMediaTime() - selectionAnimationStart)
 
         // Draw visible thumbnails — collect uniforms into a shared buffer
         encoder.setRenderPipelineState(pipelineState)
@@ -1096,15 +1259,56 @@ class Renderer: NSObject, MTKViewDelegate {
 
             let ptr = buffer.contents().bindMemory(to: Uniforms.self, capacity: needed)
             for (slot, item) in visibleItems.enumerated() {
-                let aspect = cache.aspect(at: item.index)
-                ptr[slot] = Uniforms(transform: gridLayout.transformForIndex(item.index, imageAspect: aspect))
+                ptr[slot] = Uniforms(transform: gridLayout.transformForIndex(item.index))
             }
 
+            let selIdx = gridLayout.selectedIndex
+            var selectedSlot: Int? = nil
+
+            // Draw non-selected thumbnails with normal pipeline
             for (slot, item) in visibleItems.enumerated() {
+                if item.index == selIdx {
+                    selectedSlot = slot
+                    continue
+                }
                 encoder.setVertexBuffer(buffer, offset: uniformStride * slot, index: 1)
                 encoder.setFragmentTexture(item.texture, index: 0)
                 encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
             }
+
+            // Draw selected thumbnail with morph effect
+            if let slot = selectedSlot {
+                encoder.setRenderPipelineState(morphThumbnailPipelineState)
+                encoder.setFragmentSamplerState(samplerState, index: 0)
+                encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
+                encoder.setVertexBuffer(buffer, offset: uniformStride * slot, index: 1)
+                encoder.setFragmentTexture(visibleItems[slot].texture, index: 0)
+                var morph = MorphUniforms(time: animTime, effectType: morphEffect.rawValue)
+                encoder.setFragmentBytes(&morph, length: MemoryLayout<MorphUniforms>.stride, index: 0)
+                encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
+            }
+        }
+
+        // Draw animated selection border on top of thumbnails
+        if visible.contains(gridLayout.selectedIndex) {
+            let selIdx = gridLayout.selectedIndex
+            let (_, _, itemW, itemH) = gridLayout.itemRect(at: selIdx)
+            let borderWidth: Float = 6.0
+
+            encoder.setRenderPipelineState(selectionPipelineState)
+            encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
+
+            var transform = Uniforms(transform: gridLayout.transformForIndex(selIdx))
+            encoder.setVertexBytes(&transform, length: MemoryLayout<Uniforms>.stride, index: 1)
+
+            var selUniforms = SelectionUniforms(
+                time: animTime,
+                rectSize: SIMD2<Float>(itemW, itemH),
+                borderWidth: borderWidth,
+                effectType: selectionEffect.rawValue
+            )
+            encoder.setFragmentBytes(&selUniforms, length: MemoryLayout<SelectionUniforms>.stride, index: 0)
+            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
         }
 
         encoder.endEncoding()
