@@ -19,6 +19,7 @@ enum SelectionEffect: Int32, CaseIterable {
     case rainbow = 0
     case glow = 1
     case solid = 2
+    case fire = 3
 
     func next() -> SelectionEffect {
         let cases = Self.allCases
@@ -30,6 +31,7 @@ enum SelectionEffect: Int32, CaseIterable {
         case .rainbow: return "rainbow"
         case .glow: return "glow"
         case .solid: return "solid"
+        case .fire: return "fire"
         }
     }
 }
@@ -39,6 +41,8 @@ struct SelectionUniforms {
     var rectSize: SIMD2<Float>
     var borderWidth: Float
     var effectType: Int32
+    var innerOffset: SIMD2<Float>   // offset to inner (thumbnail) rect within expanded quad
+    var innerSize: SIMD2<Float>     // size of the inner (thumbnail) rect
 }
 
 enum MorphEffect: Int32, CaseIterable {
@@ -1500,11 +1504,14 @@ class Renderer: NSObject, MTKViewDelegate {
             var transform = Uniforms(transform: gridLayout.transformForIndex(selIdx))
             encoder.setVertexBytes(&transform, length: MemoryLayout<Uniforms>.stride, index: 1)
 
+            let fireInset: Float = selectionEffect == .fire ? 20.0 : 0.0
             var selUniforms = SelectionUniforms(
                 time: animTime,
                 rectSize: SIMD2<Float>(itemW, itemH),
                 borderWidth: borderWidth,
-                effectType: selectionEffect.rawValue
+                effectType: selectionEffect.rawValue,
+                innerOffset: SIMD2<Float>(fireInset, fireInset),
+                innerSize: SIMD2<Float>(itemW - fireInset * 2, itemH - fireInset * 2)
             )
             encoder.setFragmentBytes(&selUniforms, length: MemoryLayout<SelectionUniforms>.stride, index: 0)
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
