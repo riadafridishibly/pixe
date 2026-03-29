@@ -52,7 +52,7 @@ enum ShaderSource {
         float time;
         float2 rectSize;      // quad size in points
         float borderWidth;    // border thickness in points
-        int effectType;       // 0 = rainbow, 1 = glow
+        int effectType;       // 0 = rainbow, 1 = glow, 2 = solid skyblue
     };
 
     float3 hsv2rgb(float3 c) {
@@ -87,12 +87,15 @@ enum ShaderSource {
             float brightness = 0.8 + 0.2 * (1.0 - distFromEdge / sel.borderWidth);
             float3 rgb = hsv2rgb(float3(hue, saturation, brightness));
             return float4(rgb, 1.0);
-        } else {
+        } else if (sel.effectType == 1) {
             // Glow: pulsing white, brighter at the outer edge
             float edgeFactor = 1.0 - distFromEdge / sel.borderWidth;
             float pulse = 0.5 + 0.5 * sin(sel.time * 3.0);
             float brightness = mix(0.4, 1.0, edgeFactor * pulse);
             return float4(brightness, brightness, brightness, 1.0);
+        } else {
+            // Solid skyblue (#87CEEB)
+            return float4(0.529, 0.808, 0.922, 1.0);
         }
     }
 

@@ -18,6 +18,7 @@ struct ColorUniforms {
 enum SelectionEffect: Int32, CaseIterable {
     case rainbow = 0
     case glow = 1
+    case solid = 2
 
     func next() -> SelectionEffect {
         let cases = Self.allCases
@@ -28,6 +29,7 @@ enum SelectionEffect: Int32, CaseIterable {
         switch self {
         case .rainbow: return "rainbow"
         case .glow: return "glow"
+        case .solid: return "solid"
         }
     }
 }
@@ -163,6 +165,10 @@ class Renderer: NSObject, MTKViewDelegate {
         viewportSize = SIMD2(1600, 1200)
         autoplayInterval = config.autoplayInterval
         gridLayout.padding = config.gap
+        if let name = config.selectionEffect,
+           let effect = SelectionEffect.allCases.first(where: { $0.label == name }) {
+            selectionEffect = effect
+        }
         super.init()
         setupPipeline()
         setupVertexBuffer()
