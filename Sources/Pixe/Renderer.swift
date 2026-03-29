@@ -473,22 +473,49 @@ class Renderer: NSObject, MTKViewDelegate {
         let device = self.device
         let commandQueue = self.commandQueue
         let maxPixelSize = maxDisplayPixelSize
-        let rawPreviewMinLongSide = max(1536, Int(Double(maxPixelSize) * 0.9))
+        let hadPrefetch = showedPrefetchTexture
 
         var task: DispatchWorkItem!
         task = DispatchWorkItem { [weak self] in
-            // Check generation: if user navigated away, this decode is stale
             guard let self = self, !task.isCancelled, self.loadGeneration == generation else {
                 DispatchQueue.main.async { [weak self] in self?.prefetchLoading.remove(path) }
                 return
             }
+
+            let isRaw = ImageLoader.isRawFile(path)
+
+            // Stage 1 (RAW only): show embedded preview before expensive full decode.
+            // Skip if prefetch cache already provided a preview.
+            if isRaw, !hadPrefetch {
+                if let preview = ImageLoader.loadPreviewTexture(
+                    from: path, device: device, maxPixelSize: maxPixelSize, minLongSide: 16
+                ) {
+                    let aspect = Float(preview.width) / Float(preview.height)
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self = self, self.loadGeneration == generation,
+                              self.mode == .image, self.imageList.currentPath == path else { return }
+                        if self.prefetchCache[path]?.quality != .full {
+                            self.currentTexture = preview
+                            self.imageAspect = aspect
+                            self.prefetchCache[path] = PrefetchEntry(texture: preview, aspect: aspect, quality: .prefetch)
+                            self.resetView()
+                            self.updateWindowTitle()
+                            self.prefetchAdjacentImages()
+                            if let view = self.window?.contentView as? MTKView { view.needsDisplay = true }
+                        }
+                    }
+                }
+                // Bail before expensive full RAW decode if user navigated away
+                guard !task.isCancelled, self.loadGeneration == generation else {
+                    DispatchQueue.main.async { [weak self] in self?.prefetchLoading.remove(path) }
+                    return
+                }
+            }
+
+            // Stage 2: Full quality decode (demosaic + color for RAW, standard for others)
             MemoryProfiler.logEvent("display decode starting: \((path as NSString).lastPathComponent)", device: device)
-            let texture = ImageLoader.loadDisplayTexture(
-                from: path,
-                device: device,
-                commandQueue: commandQueue,
-                maxPixelSize: maxPixelSize,
-                minRawPreviewLongSide: rawPreviewMinLongSide
+            let texture = ImageLoader.loadFullQualityTexture(
+                from: path, device: device, commandQueue: commandQueue, maxPixelSize: maxPixelSize
             )
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }

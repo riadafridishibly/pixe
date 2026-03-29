@@ -31,6 +31,15 @@ enum ImageLoader {
         return loadStandardDisplayTexture(from: path, device: device, commandQueue: commandQueue, maxPixelSize: maxPixelSize)
     }
 
+    /// Full-quality decode: always decodes the full image data (demosaic + color
+    /// for RAW, standard decode for others). No embedded-preview shortcut.
+    /// Used for stage 2 of progressive RAW loading.
+    static func loadFullQualityTexture(
+        from path: String, device: MTLDevice, commandQueue: MTLCommandQueue, maxPixelSize: Int
+    ) -> MTLTexture? {
+        return loadStandardDisplayTexture(from: path, device: device, commandQueue: commandQueue, maxPixelSize: maxPixelSize)
+    }
+
     /// Decode a standard image (JPEG, PNG, HEIC, WebP, etc.) downsampled to
     /// maxPixelSize during decode. Images smaller than maxPixelSize are not upscaled.
     private static func loadStandardDisplayTexture(
