@@ -159,6 +159,7 @@ pixe --autoplay-interval 5 ~/Pictures # Slideshow with 5s interval
 | `v` | Cycle morph effect |
 | `y` | Copy image to clipboard |
 | `Y` | Copy image path to clipboard |
+| `I` | Ignore current folder (hide all images from this directory) |
 | `i` | Toggle image info |
 | `f` | Toggle fullscreen |
 | `m` | Memory profiler |
@@ -182,6 +183,7 @@ pixe --autoplay-interval 5 ~/Pictures # Slideshow with 5s interval
 | `a` | Toggle autoplay (slideshow) |
 | `y` | Copy image to clipboard |
 | `Y` | Copy image path to clipboard |
+| `I` | Ignore current folder (hide all images from this directory) |
 | `i` | Toggle image info |
 | `f` | Toggle fullscreen |
 | `m` | Memory profiler |
