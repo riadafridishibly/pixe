@@ -909,11 +909,12 @@ class Renderer: NSObject, MTKViewDelegate {
             window?.updateInfo(text)
         case .image:
             guard let path = imageList.currentPath else { return }
-            var text = path
+            let totalWidth = String(imageList.count).count
+            let padded = String(repeating: " ", count: totalWidth - String(imageList.currentIndex + 1).count) + "\(imageList.currentIndex + 1)"
+            var text = "[\(padded)/\(imageList.count)] \(path)"
             if let tex = currentTexture {
                 text += " \u{2014} \(tex.width) \u{00D7} \(tex.height)"
             }
-            text += " \u{2014} [\(imageList.currentIndex + 1)/\(imageList.count)]"
             if imageList.isShuffled { text += " [shuffle]" }
             if isAutoplayActive { text += " [autoplay]" }
             window?.updateInfo(text)
