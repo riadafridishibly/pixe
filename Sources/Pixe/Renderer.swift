@@ -1501,36 +1501,19 @@ class Renderer: NSObject, MTKViewDelegate {
             encoder.setRenderPipelineState(selectionPipelineState)
             encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
 
-            if selectionEffect == .fire {
-                let expand: Float = 0.0    // no outward flames — hard cutoff at thumbnail edge
-                let inset: Float = 20.0    // inward flame overlap onto thumbnail
-                let extraTop: Float = 0
-                let expandedW = itemW + expand * 2
-                let expandedH = itemH + expand + (expand + extraTop)
-                var transform = Uniforms(transform: gridLayout.fireTransformForIndex(selIdx, expand: expand, extraTop: extraTop))
-                encoder.setVertexBytes(&transform, length: MemoryLayout<Uniforms>.stride, index: 1)
-                var selUniforms = SelectionUniforms(
-                    time: animTime,
-                    rectSize: SIMD2<Float>(expandedW, expandedH),
-                    borderWidth: borderWidth,
-                    effectType: selectionEffect.rawValue,
-                    innerOffset: SIMD2<Float>(expand + inset, expand + inset),
-                    innerSize: SIMD2<Float>(itemW - inset * 2, itemH - inset * 2)
-                )
-                encoder.setFragmentBytes(&selUniforms, length: MemoryLayout<SelectionUniforms>.stride, index: 0)
-            } else {
-                var transform = Uniforms(transform: gridLayout.transformForIndex(selIdx))
-                encoder.setVertexBytes(&transform, length: MemoryLayout<Uniforms>.stride, index: 1)
-                var selUniforms = SelectionUniforms(
-                    time: animTime,
-                    rectSize: SIMD2<Float>(itemW, itemH),
-                    borderWidth: borderWidth,
-                    effectType: selectionEffect.rawValue,
-                    innerOffset: SIMD2<Float>(0, 0),
-                    innerSize: SIMD2<Float>(itemW, itemH)
-                )
-                encoder.setFragmentBytes(&selUniforms, length: MemoryLayout<SelectionUniforms>.stride, index: 0)
-            }
+            var transform = Uniforms(transform: gridLayout.transformForIndex(selIdx))
+            encoder.setVertexBytes(&transform, length: MemoryLayout<Uniforms>.stride, index: 1)
+
+            let fireInset: Float = selectionEffect == .fire ? 20.0 : 0.0
+            var selUniforms = SelectionUniforms(
+                time: animTime,
+                rectSize: SIMD2<Float>(itemW, itemH),
+                borderWidth: borderWidth,
+                effectType: selectionEffect.rawValue,
+                innerOffset: SIMD2<Float>(fireInset, fireInset),
+                innerSize: SIMD2<Float>(itemW - fireInset * 2, itemH - fireInset * 2)
+            )
+            encoder.setFragmentBytes(&selUniforms, length: MemoryLayout<SelectionUniforms>.stride, index: 0)
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
         }
 
