@@ -403,11 +403,16 @@ enum ImageLoader {
 
         let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] ?? [:]
 
-        // Pixel dimensions
+        // Pixel dimensions (accounting for EXIF orientation)
         if let w = properties[kCGImagePropertyPixelWidth] as? Int,
            let h = properties[kCGImagePropertyPixelHeight] as? Int
         {
-            result.append(("Dimensions", "\(w) \u{00D7} \(h)"))
+            let orientation = properties[kCGImagePropertyOrientation] as? Int ?? 1
+            if orientation >= 5 && orientation <= 8 {
+                result.append(("Dimensions", "\(h) \u{00D7} \(w)"))
+            } else {
+                result.append(("Dimensions", "\(w) \u{00D7} \(h)"))
+            }
         }
 
         // DPI
@@ -554,6 +559,11 @@ enum ImageLoader {
               let h = properties[kCGImagePropertyPixelHeight] as? Int
         else {
             return nil
+        }
+        // EXIF orientations 5–8 involve a 90° rotation that swaps width/height
+        let orientation = properties[kCGImagePropertyOrientation] as? Int ?? 1
+        if orientation >= 5 && orientation <= 8 {
+            return (width: h, height: w)
         }
         return (width: w, height: h)
     }

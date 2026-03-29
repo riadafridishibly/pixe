@@ -87,9 +87,11 @@ pixe [options] <image|directory> ...
 | `--exclude-dir <dirs>` | Skip directories by name or path (e.g. `node_modules,~/Photos/Trash`) |
 | `--gap <points>` | Gap between thumbnails in points (default: 2, min: 0) |
 | `--selection-effect <name>` | Selection border style: `rainbow`, `glow`, `solid` (default: rainbow) |
+| `--strip` | Show neighboring images in image view (infinite strip) |
+| `--strip-gap <points>` | Gap between images in strip view (default: 20, min: 0) |
 | `--shuffle` | Start with images in random order |
 | `--autoplay` | Start slideshow (auto-advance images) |
-| `--autoplay-interval <sec>` | Slideshow interval in seconds (default: 3, implies `--autoplay`) |
+| `--autoplay-interval <sec>` | Slideshow interval in seconds (default: 3) |
 | `--config <path>` | Config file path (default: `~/.config/pixe/config`, `NONE` to skip) |
 | `--quiet` | Suppress startup config message |
 | `--warm-cache` | Pre-populate thumbnail/metadata cache headlessly and exit |

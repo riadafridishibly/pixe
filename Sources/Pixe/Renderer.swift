@@ -150,6 +150,14 @@ class Renderer: NSObject, MTKViewDelegate {
     private var startupAutoplayPending: Bool = false
     private var autoplayInterval: TimeInterval = 3.0
     var isAutoplayActive: Bool { autoplayTimer != nil }
+    // Strip animation state
+    private var stripOffset: Float = 0        // current animated offset in NDC (0 = centered)
+    private var stripAnimationTimer: DispatchSourceTimer?
+    private var stripAnimationStartTime: CFTimeInterval = 0
+    private var stripAnimationFrom: Float = 0
+    private let stripAnimationDuration: TimeInterval = 0.25
+    private var isStripAnimating: Bool { stripAnimationTimer != nil }
+
     private let displayDecodeQueue = DispatchQueue(label: "pixe.display-decode", qos: .userInitiated)
     private let prefetchDecodeQueue = DispatchQueue(label: "pixe.prefetch-decode", qos: .utility, attributes: .concurrent)
     private let prefetchDecodeSemaphore = DispatchSemaphore(value: 1)
@@ -690,6 +698,122 @@ class Renderer: NSObject, MTKViewDelegate {
 
     func rotateCW() {
         rotationSteps = (rotationSteps + 1) % 4
+        if rotationSteps != 0 { finishStripAnimation() }
+    }
+
+    // MARK: - Strip Animation
+
+    /// NDC width of an image fitted to the viewport (preserving aspect ratio).
+    private func ndcWidth(forAspect aspect: Float) -> Float {
+        let viewAspect = viewportSize.x / viewportSize.y
+        return aspect > viewAspect ? 2.0 : 2.0 * aspect / viewAspect
+    }
+
+    /// Aspect ratio for any image index (prefetch cache → thumbnail cache → fallback).
+    private func aspectForIndex(_ idx: Int) -> Float {
+        let path = imageList.allPaths[idx]
+        if let entry = prefetchCache[path] { return entry.aspect }
+        if let a = thumbnailCache?.aspect(at: idx) { return a }
+        return 1.0
+    }
+
+    /// Gap between image edges in NDC units.
+    private var stripGapNDC: Float {
+        let viewWidthPts = viewportSize.x / Float(backingScaleFactor)
+        return (config.stripGap * 2.0) / viewWidthPts
+    }
+
+    /// Center-to-center distance between two adjacent images in NDC.
+    private func stripSlotDistance(leftAspect: Float, rightAspect: Float) -> Float {
+        return ndcWidth(forAspect: leftAspect) / 2.0 + stripGapNDC + ndcWidth(forAspect: rightAspect) / 2.0
+    }
+
+    func navigateWithStripAnimation(direction: Int) {
+        guard imageList.count > 1 else { return }
+
+        // If already animating, finish instantly and start a new animation
+        if isStripAnimating {
+            finishStripAnimation()
+        }
+
+        // Compute the distance in NDC between old current and new current BEFORE advancing
+        let oldAspect = imageAspect
+        let count = imageList.count
+        let neighborIdx = direction > 0
+            ? (imageList.currentIndex + 1) % count
+            : (imageList.currentIndex - 1 + count) % count
+        let neighborAspect = aspectForIndex(neighborIdx)
+        let dist = stripSlotDistance(leftAspect: oldAspect, rightAspect: neighborAspect)
+
+        // Advance image list
+        if direction > 0 {
+            imageList.goNext()
+        } else {
+            imageList.goPrevious()
+        }
+        loadCurrentImage()
+
+        // Animate stripOffset (NDC units) from starting position to 0 (centered).
+        // Navigate next: the old image was at center, new current was to the right,
+        // so after advancing, shift the strip right (+dist) and slide back to 0.
+        // Navigate prev: opposite direction.
+        stripAnimationFrom = direction > 0 ? dist : -dist
+        stripOffset = stripAnimationFrom
+        stripAnimationStartTime = CACurrentMediaTime()
+
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now(), repeating: 1.0 / 60.0)
+        timer.setEventHandler { [weak self] in
+            self?.updateStripAnimation()
+        }
+        timer.resume()
+        stripAnimationTimer = timer
+    }
+
+    private func updateStripAnimation() {
+        let elapsed = CACurrentMediaTime() - stripAnimationStartTime
+        let progress = min(1.0, Float(elapsed / stripAnimationDuration))
+
+        // Ease-out cubic: 1 - (1 - t)^3
+        let eased = 1.0 - pow(1.0 - progress, 3)
+
+        stripOffset = stripAnimationFrom * (1.0 - eased)
+
+        if let view = window?.contentView as? MTKView {
+            view.needsDisplay = true
+        }
+
+        if progress >= 1.0 {
+            finishStripAnimation()
+        }
+    }
+
+    private func finishStripAnimation() {
+        stripAnimationTimer?.cancel()
+        stripAnimationTimer = nil
+        stripOffset = 0
+        if let view = window?.contentView as? MTKView {
+            view.needsDisplay = true
+        }
+    }
+
+    private func buildStripImageTransform(aspect: Float, offsetX: Float) -> simd_float4x4 {
+        let viewAspect = viewportSize.x / viewportSize.y
+
+        var sx: Float = 1.0
+        var sy: Float = 1.0
+        if aspect > viewAspect {
+            sy = viewAspect / aspect
+        } else {
+            sx = aspect / viewAspect
+        }
+
+        return simd_float4x4(
+            SIMD4<Float>( sx, 0,  0, 0),
+            SIMD4<Float>( 0,  sy, 0, 0),
+            SIMD4<Float>( 0,  0,  1, 0),
+            SIMD4<Float>( offsetX, 0, 0, 1)
+        )
     }
 
     func updateWindowTitle() {
@@ -785,11 +909,12 @@ class Renderer: NSObject, MTKViewDelegate {
             window?.updateInfo(text)
         case .image:
             guard let path = imageList.currentPath else { return }
-            var text = path
+            let totalWidth = String(imageList.count).count
+            let padded = String(repeating: " ", count: totalWidth - String(imageList.currentIndex + 1).count) + "\(imageList.currentIndex + 1)"
+            var text = "[\(padded)/\(imageList.count)] \(path)"
             if let tex = currentTexture {
                 text += " \u{2014} \(tex.width) \u{00D7} \(tex.height)"
             }
-            text += " \u{2014} [\(imageList.currentIndex + 1)/\(imageList.count)]"
             if imageList.isShuffled { text += " [shuffle]" }
             if isAutoplayActive { text += " [autoplay]" }
             window?.updateInfo(text)
@@ -1052,8 +1177,12 @@ class Renderer: NSObject, MTKViewDelegate {
             stopAutoplay()
             return
         }
-        imageList.goNext()
-        loadCurrentImage()
+        if config.strip {
+            navigateWithStripAnimation(direction: 1)
+        } else {
+            imageList.goNext()
+            loadCurrentImage()
+        }
     }
 
     private func startPendingAutoplayIfPossible() {
@@ -1077,6 +1206,7 @@ class Renderer: NSObject, MTKViewDelegate {
         thumbnailGIFAnimator = nil
         thumbnailGIFPath = nil
         stopSelectionAnimation()
+        finishStripAnimation()
         imageList.goTo(index: index)
         mode = .image
         // Pre-set thumbnail as placeholder to avoid black flash
@@ -1088,6 +1218,7 @@ class Renderer: NSObject, MTKViewDelegate {
     func enterThumbnailMode() {
         guard hasMultipleImages else { return }
         stopAutoplay()
+        finishStripAnimation()
         mode = .thumbnail
         startSelectionAnimation()
         gridLayout.selectedIndex = imageList.currentIndex
@@ -1123,10 +1254,12 @@ class Renderer: NSObject, MTKViewDelegate {
     func zoomBy(factor: Float) {
         scale *= factor
         scale = max(0.1, min(scale, 50.0))
+        if scale > 1.0 { finishStripAnimation() }
     }
 
     func setScale(_ newScale: Float) {
         scale = max(0.1, min(newScale, 50.0))
+        if scale > 1.0 { finishStripAnimation() }
     }
 
     func panBy(dx: Float, dy: Float) {
@@ -1159,28 +1292,94 @@ class Renderer: NSObject, MTKViewDelegate {
     // MARK: - Image Drawing
 
     private func drawImage(in view: MTKView) {
-        guard let texture = gifAnimator?.currentTexture ?? currentTexture,
+        guard let currentTex = gifAnimator?.currentTexture ?? currentTexture,
               let drawable = view.currentDrawable,
               let descriptor = view.currentRenderPassDescriptor else { return }
 
         descriptor.colorAttachments[0].clearColor = MTLClearColor(red: 0.08, green: 0.08, blue: 0.08, alpha: 1.0)
         descriptor.colorAttachments[0].loadAction = .clear
 
-        var uniforms = Uniforms(transform: buildTransformMatrix())
-
         guard let commandBuffer = commandQueue.makeCommandBuffer(),
               let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: descriptor) else { return }
 
         encoder.setRenderPipelineState(pipelineState)
         encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
-        encoder.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
-        encoder.setFragmentTexture(texture, index: 0)
         encoder.setFragmentSamplerState(samplerState, index: 0)
-        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
+
+        if config.strip && scale <= 1.0 && rotationSteps == 0 && imageList.count > 1 {
+            drawImageStrip(encoder: encoder, currentTexture: currentTex)
+        } else {
+            var uniforms = Uniforms(transform: buildTransformMatrix())
+            encoder.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
+            encoder.setFragmentTexture(currentTex, index: 0)
+            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
+        }
 
         encoder.endEncoding()
         commandBuffer.present(drawable)
         commandBuffer.commit()
+    }
+
+    private func drawImageStrip(encoder: MTLRenderCommandEncoder, currentTexture: MTLTexture) {
+        let count = imageList.count
+        let currentIdx = imageList.currentIndex
+        let n = 3 // max neighbors on each side
+        let slots = 2 * n + 1 // total slots: [-n...n] mapped to [0...2n]
+        let gap = stripGapNDC
+
+        // Precompute per-slot data using arrays indexed by (r + n)
+        var aspects = [Float](repeating: 1.0, count: slots)
+        var widths = [Float](repeating: 0, count: slots)
+        var indices = [Int](repeating: 0, count: slots)
+        for r in -n...n {
+            let idx = ((currentIdx + r) % count + count) % count
+            let s = r + n
+            indices[s] = idx
+            aspects[s] = r == 0 ? imageAspect : aspectForIndex(idx)
+            widths[s] = ndcWidth(forAspect: aspects[s])
+        }
+
+        // Compute center positions by accumulating widths outward from center
+        var centers = [Float](repeating: 0, count: slots)
+        centers[n] = stripOffset
+        for r in 1...n {
+            centers[n + r] = centers[n + r - 1] + widths[n + r - 1] / 2.0 + gap + widths[n + r] / 2.0
+            centers[n - r] = centers[n - r + 1] - widths[n - r + 1] / 2.0 - gap - widths[n - r] / 2.0
+        }
+
+        for r in -n...n {
+            let s = r + n
+            let centerX = centers[s]
+            let w = widths[s]
+            if centerX + w / 2.0 < -1.0 || centerX - w / 2.0 > 1.0 { continue }
+
+            let idx = indices[s]
+            // Avoid drawing duplicates when count is small
+            if count <= n * 2 && r != 0 {
+                let firstR = ((idx - currentIdx) % count + count) % count
+                let canonR = firstR <= count / 2 ? firstR : firstR - count
+                if canonR != r { continue }
+            }
+
+            var texture: MTLTexture
+            if r == 0 {
+                texture = currentTexture
+            } else {
+                let path = imageList.allPaths[idx]
+                if let entry = prefetchCache[path] {
+                    texture = entry.texture
+                } else if let thumbTex = thumbnailCache?.texture(at: idx) {
+                    texture = thumbTex
+                } else {
+                    continue
+                }
+            }
+
+            var uniforms = Uniforms(transform: buildStripImageTransform(aspect: aspects[s], offsetX: centerX))
+            encoder.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
+            encoder.setFragmentTexture(texture, index: 0)
+            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
+        }
     }
 
     // MARK: - Thumbnail Grid Drawing
