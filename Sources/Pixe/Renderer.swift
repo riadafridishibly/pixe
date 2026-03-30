@@ -142,12 +142,12 @@ class Renderer: NSObject, MTKViewDelegate {
         let quality: DisplayTextureQuality
     }
 
-    private var prefetchCache: [String: PrefetchEntry] = [:]
-    private var prefetchLoading: Set<String> = []  // paths currently being loaded (prevents double decode)
+    var prefetchCache: [String: PrefetchEntry] = [:]
+    var prefetchLoading: Set<String> = []  // paths currently being loaded (prevents double decode)
     private var currentLoadTask: DispatchWorkItem?
     private var currentLoadPath: String?
-    private var loadGeneration: Int = 0  // increments on each navigation, stale tasks bail out
-    private var prefetchGeneration: Int = 0  // increments whenever adjacency set changes
+    var loadGeneration: Int = 0  // increments on each navigation, stale tasks bail out
+    var prefetchGeneration: Int = 0  // increments whenever adjacency set changes
     private var thumbnailSearchQuery: String?
     private var infoRestoreWorkItem: DispatchWorkItem?
     private var autoplayTimer: DispatchSourceTimer?
@@ -705,7 +705,15 @@ class Renderer: NSObject, MTKViewDelegate {
                 DispatchQueue.main.async {
                     self.prefetchLoading.remove(path)
                     guard self.mode == .image else { return }
-                    guard self.prefetchGeneration == generation else { return }
+                    guard self.prefetchGeneration == generation else {
+                        // Generation changed — loadCurrentImage() may have early-returned
+                        // relying on this prefetch to promote the texture. Re-trigger loading
+                        // so the image doesn't get stuck on the thumbnail placeholder.
+                        if self.imageList.currentPath == path {
+                            self.loadCurrentImage()
+                        }
+                        return
+                    }
                     guard self.currentAndAdjacentPaths().contains(path) else { return }
                     self.prefetchCache[path] = PrefetchEntry(texture: tex, aspect: aspect, quality: .prefetch)
 
