@@ -277,7 +277,7 @@ enum ShaderSource {
 
         float angleDeg = 50.0;
         float size = 0.2;
-        float thickness = 0.012;
+        float thickness = 0.008;
 
         float angle = angleDeg * M_PI_F / 180.0;
 
@@ -299,7 +299,7 @@ enum ShaderSource {
         float edge = fwidth(d);
 
         // Dark shadow (wider) behind white chevron — visible on any background
-        float shadowThickness = thickness + 0.025;
+        float shadowThickness = thickness + 0.010;
         float shadow = smoothstep(shadowThickness + edge, shadowThickness - edge, d);
         float chevron = smoothstep(thickness + edge, thickness - edge, d);
 
