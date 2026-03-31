@@ -37,7 +37,10 @@ enum SortMode: String {
 
 struct Config {
     let thumbDir: String
+    /// Decode pixel size for thumbnails (scaled for retina when explicit).
     let thumbSize: Int
+    /// Display size in points for grid layout (only set when --thumb-size is explicit).
+    let thumbDisplaySize: Int?
     let minSize: Int
     let minWidth: Int
     let minHeight: Int
@@ -147,6 +150,7 @@ struct Config {
 
         var thumbDir = defaultThumbDir
         var thumbSize = defaultThumbSize
+        var thumbSizeExplicit = false
         var minSize = 0
         var minWidth = 0
         var minHeight = 0
@@ -182,6 +186,14 @@ struct Config {
                 cleanThumbs = true
             case "--warm-cache":
                 warmCache = true
+            case let a where a.hasPrefix("--thumb-dir="):
+                let path = String(a.dropFirst("--thumb-dir=".count))
+                if path.hasPrefix("/") || path.hasPrefix("~") {
+                    thumbDir = (path as NSString).expandingTildeInPath
+                } else {
+                    thumbDir = (FileManager.default.currentDirectoryPath as NSString)
+                        .appendingPathComponent(path)
+                }
             case "--thumb-dir":
                 i += 1
                 if i < allArgs.count {
@@ -193,10 +205,16 @@ struct Config {
                             .appendingPathComponent(path)
                     }
                 }
+            case let a where a.hasPrefix("--thumb-size="):
+                if let size = Int(String(a.dropFirst("--thumb-size=".count))), size > 0 {
+                    thumbSize = size
+                    thumbSizeExplicit = true
+                }
             case "--thumb-size":
                 i += 1
                 if i < allArgs.count, let size = Int(allArgs[i]), size > 0 {
                     thumbSize = size
+                    thumbSizeExplicit = true
                 }
             case let a where a.hasPrefix("--min-size="):
                 if let size = Int(String(a.dropFirst("--min-size=".count))), size >= 0 {
@@ -370,7 +388,8 @@ struct Config {
 
         return Config(
             thumbDir: thumbDir,
-            thumbSize: thumbSize,
+            thumbSize: thumbSizeExplicit ? thumbSize * 2 : thumbSize,
+            thumbDisplaySize: thumbSizeExplicit ? thumbSize : nil,
             minSize: minSize,
             minWidth: minWidth,
             minHeight: minHeight,

@@ -2,11 +2,18 @@ import Foundation
 import simd
 
 class GridLayout {
-    let defaultThumbnailSize: Float = 200.0
-    let minThumbnailSize: Float = 96.0
-    let maxThumbnailSize: Float = 420.0
-    var thumbnailSize: Float = 200.0 {
+    let defaultThumbnailSize: Float
+    let minThumbnailSize: Float
+    let maxThumbnailSize: Float
+    var thumbnailSize: Float {
         didSet { if oldValue != thumbnailSize { invalidateLayout() } }
+    }
+
+    init(defaultSize: Float = 200.0) {
+        defaultThumbnailSize = defaultSize
+        minThumbnailSize = min(96.0, defaultSize * 0.5)
+        maxThumbnailSize = max(420.0, defaultSize * 2.0)
+        thumbnailSize = defaultSize
     }
     var padding: Float = 2.0 {
         didSet { if oldValue != padding { invalidateLayout() } }
