@@ -1067,6 +1067,8 @@ class Renderer: NSObject, MTKViewDelegate {
         thumbnailCache?.invalidateAll()
         prefetchCache.removeValue(forKey: path)
 
+        gridLayout.resetAspects()
+        aspectPreloadedCount = 0
         gridLayout.totalItems = imageList.count
         if gridLayout.selectedIndex >= imageList.count {
             gridLayout.selectedIndex = imageList.count - 1
