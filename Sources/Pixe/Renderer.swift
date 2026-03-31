@@ -67,6 +67,12 @@ struct MorphUniforms {
     var effectType: Int32
 }
 
+struct NavZoneUniforms {
+    var alpha: Float
+    var pointsLeft: Int32
+    var aspectRatio: Float
+}
+
 struct Vertex {
     var position: SIMD2<Float>
     var texCoord: SIMD2<Float>
@@ -79,6 +85,7 @@ class Renderer: NSObject, MTKViewDelegate {
     var flatColorPipelineState: MTLRenderPipelineState!
     var selectionPipelineState: MTLRenderPipelineState!
     var morphThumbnailPipelineState: MTLRenderPipelineState!
+    var navZonePipelineState: MTLRenderPipelineState!
     var samplerState: MTLSamplerState!
     var vertexBuffer: MTLBuffer!
 
@@ -161,6 +168,15 @@ class Renderer: NSObject, MTKViewDelegate {
     private var stripAnimationFrom: Float = 0
     private let stripAnimationDuration: TimeInterval = 0.25
     private var isStripAnimating: Bool { stripAnimationTimer != nil }
+
+    // Chrome overlay state
+    private var chromeScrollbarAlpha: Float = 0.0
+    private var chromeNavButtonAlpha: Float = 0.0
+    private var chromeScrollbarTarget: Float = 0.0
+    private var chromeNavButtonTarget: Float = 0.0
+    private var chromeAnimationTimer: DispatchSourceTimer?
+    private var scrollbarHideTimer: DispatchSourceTimer?
+    private var navButtonHideTimer: DispatchSourceTimer?
 
     private let displayDecodeQueue = DispatchQueue(label: "pixe.display-decode", qos: .userInitiated)
     private let prefetchDecodeQueue = DispatchQueue(label: "pixe.prefetch-decode", qos: .utility, attributes: .concurrent)
@@ -322,12 +338,17 @@ class Renderer: NSObject, MTKViewDelegate {
         pipelineDescriptor.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
         pipelineState = try! device.makeRenderPipelineState(descriptor: pipelineDescriptor)
 
-        // Flat color pipeline
+        // Flat color pipeline (with alpha blending for chrome overlays)
         let flatPipelineDescriptor = MTLRenderPipelineDescriptor()
         flatPipelineDescriptor.vertexFunction = vertexFunction
         flatPipelineDescriptor.fragmentFunction = flatColorFunction
         flatPipelineDescriptor.vertexDescriptor = vertexDescriptor
         flatPipelineDescriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
+        flatPipelineDescriptor.colorAttachments[0].isBlendingEnabled = true
+        flatPipelineDescriptor.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
+        flatPipelineDescriptor.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
+        flatPipelineDescriptor.colorAttachments[0].sourceAlphaBlendFactor = .one
+        flatPipelineDescriptor.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
         flatColorPipelineState = try! device.makeRenderPipelineState(descriptor: flatPipelineDescriptor)
 
         // Selection border pipeline (animated)
@@ -357,6 +378,20 @@ class Renderer: NSObject, MTKViewDelegate {
         morphPipelineDescriptor.colorAttachments[0].sourceAlphaBlendFactor = .one
         morphPipelineDescriptor.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
         morphThumbnailPipelineState = try! device.makeRenderPipelineState(descriptor: morphPipelineDescriptor)
+
+        // Nav zone pipeline (gradient + chevron overlay for image mode navigation)
+        let navZoneFunction = library.makeFunction(name: "navZoneFragment")!
+        let navPipelineDescriptor = MTLRenderPipelineDescriptor()
+        navPipelineDescriptor.vertexFunction = vertexFunction
+        navPipelineDescriptor.fragmentFunction = navZoneFunction
+        navPipelineDescriptor.vertexDescriptor = vertexDescriptor
+        navPipelineDescriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
+        navPipelineDescriptor.colorAttachments[0].isBlendingEnabled = true
+        navPipelineDescriptor.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
+        navPipelineDescriptor.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
+        navPipelineDescriptor.colorAttachments[0].sourceAlphaBlendFactor = .one
+        navPipelineDescriptor.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
+        navZonePipelineState = try! device.makeRenderPipelineState(descriptor: navPipelineDescriptor)
     }
 
     private func setupVertexBuffer() {
@@ -1301,6 +1336,7 @@ class Renderer: NSObject, MTKViewDelegate {
         thumbnailGIFPath = nil
         stopSelectionAnimation()
         finishStripAnimation()
+        resetChrome()
         imageList.goTo(index: index)
         mode = .image
         // Pre-set thumbnail as placeholder to avoid black flash
@@ -1313,6 +1349,7 @@ class Renderer: NSObject, MTKViewDelegate {
         guard hasMultipleImages else { return }
         stopAutoplay()
         finishStripAnimation()
+        resetChrome()
         mode = .thumbnail
         startSelectionAnimation()
         gridLayout.selectedIndex = imageList.currentIndex
@@ -1341,6 +1378,93 @@ class Renderer: NSObject, MTKViewDelegate {
         if let view = window?.contentView {
             window?.invalidateCursorRects(for: view)
         }
+    }
+
+    // MARK: - Chrome Auto-Hide
+
+    func showScrollbar() {
+        guard config.chrome else { return }
+        chromeScrollbarTarget = 0.6
+        startChromeAnimation()
+        // Reset hide timer
+        scrollbarHideTimer?.cancel()
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + 1.5)
+        timer.setEventHandler { [weak self] in
+            self?.chromeScrollbarTarget = 0.0
+            self?.startChromeAnimation()
+        }
+        timer.resume()
+        scrollbarHideTimer = timer
+    }
+
+    func showNavButtons() {
+        guard config.chrome else { return }
+        chromeNavButtonTarget = 0.7
+        startChromeAnimation()
+        navButtonHideTimer?.cancel()
+        navButtonHideTimer = nil
+    }
+
+    func scheduleHideNavButtons() {
+        guard config.chrome else { return }
+        navButtonHideTimer?.cancel()
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + 1.0)
+        timer.setEventHandler { [weak self] in
+            self?.chromeNavButtonTarget = 0.0
+            self?.startChromeAnimation()
+        }
+        timer.resume()
+        navButtonHideTimer = timer
+    }
+
+    private func startChromeAnimation() {
+        guard chromeAnimationTimer == nil else { return }
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now(), repeating: 1.0 / 30.0)
+        timer.setEventHandler { [weak self] in
+            self?.updateChromeAnimation()
+        }
+        timer.resume()
+        chromeAnimationTimer = timer
+    }
+
+    private func updateChromeAnimation() {
+        let speed: Float = 0.15
+        chromeScrollbarAlpha += (chromeScrollbarTarget - chromeScrollbarAlpha) * speed
+        chromeNavButtonAlpha += (chromeNavButtonTarget - chromeNavButtonAlpha) * speed
+
+        // Snap to target when close enough
+        if abs(chromeScrollbarAlpha - chromeScrollbarTarget) < 0.01 {
+            chromeScrollbarAlpha = chromeScrollbarTarget
+        }
+        if abs(chromeNavButtonAlpha - chromeNavButtonTarget) < 0.01 {
+            chromeNavButtonAlpha = chromeNavButtonTarget
+        }
+
+        // Stop timer when all animations are settled
+        if chromeScrollbarAlpha == chromeScrollbarTarget && chromeNavButtonAlpha == chromeNavButtonTarget {
+            chromeAnimationTimer?.cancel()
+            chromeAnimationTimer = nil
+        }
+
+        if let view = window?.contentView as? MTKView {
+            view.needsDisplay = true
+        }
+    }
+
+    private func resetChrome() {
+        chromeScrollbarAlpha = 0
+        chromeScrollbarTarget = 0
+        chromeNavButtonAlpha = 0
+        chromeNavButtonTarget = 0
+        scrollbarHideTimer?.cancel()
+        scrollbarHideTimer = nil
+        navButtonHideTimer?.cancel()
+        navButtonHideTimer = nil
+        chromeAnimationTimer?.cancel()
+        chromeAnimationTimer = nil
     }
 
     // MARK: - Zoom/Pan
@@ -1407,6 +1531,11 @@ class Renderer: NSObject, MTKViewDelegate {
             encoder.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
             encoder.setFragmentTexture(currentTex, index: 0)
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
+        }
+
+        // Chrome: navigation buttons
+        if config.chrome && chromeNavButtonAlpha > 0.01 {
+            drawNavButtons(encoder: encoder)
         }
 
         encoder.endEncoding()
@@ -1607,6 +1736,20 @@ class Renderer: NSObject, MTKViewDelegate {
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
         }
 
+        // Chrome: hover highlight
+        if config.chrome,
+           let inputHandler = (view as? MetalImageView)?.inputHandler,
+           let hoverIdx = inputHandler.hoveredIndex,
+           hoverIdx != gridLayout.selectedIndex,
+           visible.contains(hoverIdx) {
+            drawHoverHighlight(encoder: encoder, index: hoverIdx)
+        }
+
+        // Chrome: scrollbar
+        if config.chrome && chromeScrollbarAlpha > 0.01 {
+            drawScrollbar(encoder: encoder)
+        }
+
         encoder.endEncoding()
         commandBuffer.present(drawable)
         commandBuffer.commit()
@@ -1618,5 +1761,95 @@ class Renderer: NSObject, MTKViewDelegate {
                 view.needsDisplay = true
             }
         }
+    }
+
+    // MARK: - Chrome Drawing
+
+    private func drawHoverHighlight(encoder: MTLRenderCommandEncoder, index: Int) {
+        encoder.setRenderPipelineState(flatColorPipelineState)
+        encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
+
+        var transform = Uniforms(transform: gridLayout.transformForIndex(index))
+        encoder.setVertexBytes(&transform, length: MemoryLayout<Uniforms>.stride, index: 1)
+
+        var color = ColorUniforms(color: SIMD4<Float>(1, 1, 1, 0.08))
+        encoder.setFragmentBytes(&color, length: MemoryLayout<ColorUniforms>.stride, index: 0)
+        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
+    }
+
+    private func drawScrollbar(encoder: MTLRenderCommandEncoder) {
+        let vpW = gridLayout.viewportWidth
+        let vpH = gridLayout.viewportHeight
+        let visFrac = gridLayout.visibleFraction
+        guard visFrac < 1.0 else { return }  // No scrollbar if everything fits
+
+        let scrollFrac = gridLayout.scrollFraction
+        let barWidth: Float = 6.0
+        let barPadding: Float = 4.0
+        let thumbHeight = max(20.0, vpH * visFrac)
+        let trackHeight = vpH - barPadding * 2
+        let thumbY = barPadding + scrollFrac * (trackHeight - thumbHeight)
+
+        // Convert to NDC
+        let ndcX = ((vpW - barPadding - barWidth / 2.0) / vpW) * 2.0 - 1.0
+        let ndcY = 1.0 - ((thumbY + thumbHeight / 2.0) / vpH) * 2.0
+        let ndcW = barWidth / vpW
+        let ndcH = thumbHeight / vpH
+
+        encoder.setRenderPipelineState(flatColorPipelineState)
+        encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
+
+        let scrollTransform = simd_float4x4(
+            SIMD4<Float>(ndcW, 0, 0, 0),
+            SIMD4<Float>(0, ndcH, 0, 0),
+            SIMD4<Float>(0, 0, 1, 0),
+            SIMD4<Float>(ndcX, ndcY, 0, 1)
+        )
+        var transform = Uniforms(transform: scrollTransform)
+        encoder.setVertexBytes(&transform, length: MemoryLayout<Uniforms>.stride, index: 1)
+
+        var color = ColorUniforms(color: SIMD4<Float>(1, 1, 1, chromeScrollbarAlpha))
+        encoder.setFragmentBytes(&color, length: MemoryLayout<ColorUniforms>.stride, index: 0)
+        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
+    }
+
+    private func drawNavButtons(encoder: MTLRenderCommandEncoder) {
+        guard let inputHandler = (window?.contentView as? MetalImageView)?.inputHandler else { return }
+
+        encoder.setRenderPipelineState(navZonePipelineState)
+        encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
+
+        // Full-height zones covering the left/right 15% of the viewport
+        let zoneWidth: Float = 0.15  // fraction of viewport — matches click edge zone
+
+        if inputHandler.mouseInLeftEdge {
+            drawNavZone(encoder: encoder, ndcLeft: -1.0, ndcWidth: zoneWidth * 2.0, pointsLeft: true)
+        }
+        if inputHandler.mouseInRightEdge {
+            drawNavZone(encoder: encoder, ndcLeft: 1.0 - zoneWidth * 2.0, ndcWidth: zoneWidth * 2.0, pointsLeft: false)
+        }
+    }
+
+    private func drawNavZone(encoder: MTLRenderCommandEncoder,
+                            ndcLeft: Float, ndcWidth: Float, pointsLeft: Bool) {
+        // Full-height quad positioned at the edge
+        let ndcCenterX = ndcLeft + ndcWidth / 2.0
+        let transform = simd_float4x4(
+            SIMD4<Float>(ndcWidth / 2.0, 0, 0, 0),
+            SIMD4<Float>(0, 1, 0, 0),   // full height in NDC
+            SIMD4<Float>(0, 0, 1, 0),
+            SIMD4<Float>(ndcCenterX, 0, 0, 1)
+        )
+        var uniforms = Uniforms(transform: transform)
+        encoder.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 1)
+
+        let vpW = gridLayout.viewportWidth
+        let vpH = gridLayout.viewportHeight
+        let zoneWidthPts = vpW * 0.15  // matches the 15% edge zone
+        let aspect = zoneWidthPts / vpH
+
+        var nav = NavZoneUniforms(alpha: chromeNavButtonAlpha, pointsLeft: pointsLeft ? 1 : 0, aspectRatio: aspect)
+        encoder.setFragmentBytes(&nav, length: MemoryLayout<NavZoneUniforms>.stride, index: 0)
+        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
     }
 }

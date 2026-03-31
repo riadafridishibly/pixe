@@ -44,6 +44,41 @@ class MetalImageView: MTKView {
         inputHandler?.handleKeyDown(event: event, view: self)
     }
 
+    // MARK: - Mouse Events
+
+    private var trackingArea: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let existing = trackingArea {
+            removeTrackingArea(existing)
+        }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        inputHandler?.handleMouseDown(event: event, view: self)
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        inputHandler?.handleMouseMoved(event: event, view: self)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        inputHandler?.handleMouseExited(view: self)
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        inputHandler?.handleRightMouseDown(event: event, view: self)
+    }
+
     // MARK: - Cursor
 
     override func resetCursorRects() {

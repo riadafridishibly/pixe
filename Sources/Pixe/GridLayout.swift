@@ -332,6 +332,56 @@ class GridLayout {
         )
     }
 
+    // MARK: - Hit Testing
+
+    /// Returns the item index at the given point in view coordinates (origin top-left).
+    func itemIndex(at point: (x: Float, y: Float)) -> Int? {
+        ensureLayout()
+        guard !rowInfos.isEmpty else { return nil }
+
+        // Convert to content-space by adding scroll offset
+        let contentY = point.y + scrollOffset
+
+        // Binary search for the row containing this y coordinate
+        var lo = 0, hi = rowInfos.count - 1
+        var targetRow: Int? = nil
+        while lo <= hi {
+            let mid = (lo + hi) / 2
+            let row = rowInfos[mid]
+            if contentY < row.y {
+                hi = mid - 1
+            } else if contentY > row.y + row.height {
+                lo = mid + 1
+            } else {
+                targetRow = mid
+                break
+            }
+        }
+        guard let ri = targetRow else { return nil }
+
+        // Linear scan items in this row
+        let row = rowInfos[ri]
+        for i in row.startIndex ..< (row.startIndex + row.count) {
+            let rect = itemRects[i]
+            if point.x >= rect.x && point.x < rect.x + rect.width {
+                return i
+            }
+        }
+        return nil
+    }
+
+    /// Fraction of total content scrolled (0.0 = top, 1.0 = bottom).
+    var scrollFraction: Float {
+        let maxScroll = max(totalHeight - viewportHeight, 1)
+        return scrollOffset / maxScroll
+    }
+
+    /// Fraction of total content visible in the viewport.
+    var visibleFraction: Float {
+        guard totalHeight > 0 else { return 1 }
+        return min(1, viewportHeight / totalHeight)
+    }
+
     // MARK: - Row Helpers
 
     private func rowIndex(for itemIndex: Int) -> Int {
