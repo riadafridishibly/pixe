@@ -35,16 +35,28 @@ if config.warmCache {
     exit(0)
 }
 
-if config.imageArguments.isEmpty {
-    fputs("Usage: pixe [options] <image> [image ...]\n", stderr)
-    fputs("       pixe [options] <directory>\n", stderr)
-    fputs("       pixe --clean-thumbs\n", stderr)
-    fputs("       pixe --warm-cache <directory>\n", stderr)
-    fputs("       pixe --help\n", stderr)
-    exit(1)
+var imageArguments = config.imageArguments
+
+if imageArguments.isEmpty {
+    let app = NSApplication.shared
+    app.setActivationPolicy(.regular)
+    app.activate(ignoringOtherApps: true)
+
+    let panel = NSOpenPanel()
+    panel.canChooseFiles = false
+    panel.canChooseDirectories = true
+    panel.allowsMultipleSelection = false
+    panel.message = "Select a folder to open in pixe"
+    panel.prompt = "Open"
+
+    let response = panel.runModal()
+    guard response == .OK, let url = panel.url else {
+        exit(0)
+    }
+    imageArguments = [url.path]
 }
 
-let imageList = ImageList(arguments: config.imageArguments, config: config)
+let imageList = ImageList(arguments: imageArguments, config: config)
 
 if imageList.isEmpty && !imageList.hasDirectoryArguments {
     fputs("pixe: no images found\n", stderr)
