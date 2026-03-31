@@ -14,7 +14,10 @@ class ImageWindow: NSWindow {
 
     init(contentView: NSView) {
         let screenFrame = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1280, height: 800)
-        let windowSize = NSSize(width: 800, height: 600)
+        let windowSize = NSSize(
+            width: round(screenFrame.width * 0.75),
+            height: round(screenFrame.height * 0.75)
+        )
         let windowOrigin = NSPoint(
             x: screenFrame.midX - windowSize.width / 2,
             y: screenFrame.midY - windowSize.height / 2
