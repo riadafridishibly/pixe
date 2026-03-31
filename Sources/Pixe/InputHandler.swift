@@ -446,10 +446,19 @@ class InputHandler: NSObject {
 
     private func handleThumbnailScroll(event: NSEvent, view: MTKView) {
         guard let renderer = renderer else { return }
-        let delta = Float(-event.scrollingDeltaY) * 6.0
-        renderer.gridLayout.scrollBy(delta: delta)
+        let vpH = renderer.gridLayout.viewportHeight
+
+        if event.phase != [] || event.momentumPhase != [] {
+            // Trackpad: already has momentum, apply directly
+            let delta = Float(-event.scrollingDeltaY) * 3.0
+            renderer.gridLayout.scrollBy(delta: delta)
+            view.needsDisplay = true
+        } else {
+            // Discrete mouse wheel: scroll ~20% of viewport per notch, animated
+            let delta = Float(-event.scrollingDeltaY) * vpH * 0.2
+            renderer.smoothScrollBy(delta: delta)
+        }
         renderer.showScrollbar()
-        view.needsDisplay = true
     }
 
     private func handleImageScroll(event: NSEvent, view: MTKView) {

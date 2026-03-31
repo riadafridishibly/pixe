@@ -169,6 +169,10 @@ class Renderer: NSObject, MTKViewDelegate {
     private let stripAnimationDuration: TimeInterval = 0.25
     private var isStripAnimating: Bool { stripAnimationTimer != nil }
 
+    // Smooth scroll state
+    private var scrollTarget: Float = 0.0
+    private var scrollAnimationTimer: DispatchSourceTimer?
+
     // Chrome overlay state
     private var chromeScrollbarAlpha: Float = 0.0
     private var chromeNavButtonAlpha: Float = 0.0
@@ -1336,6 +1340,7 @@ class Renderer: NSObject, MTKViewDelegate {
         thumbnailGIFPath = nil
         stopSelectionAnimation()
         finishStripAnimation()
+        stopScrollAnimation()
         resetChrome()
         imageList.goTo(index: index)
         mode = .image
@@ -1378,6 +1383,52 @@ class Renderer: NSObject, MTKViewDelegate {
         if let view = window?.contentView {
             window?.invalidateCursorRects(for: view)
         }
+    }
+
+    // MARK: - Smooth Scroll
+
+    func smoothScrollBy(delta: Float) {
+        scrollTarget = gridLayout.scrollOffset + delta
+        // Clamp target to valid range
+        let maxScroll = max(0, gridLayout.totalHeight - gridLayout.viewportHeight)
+        scrollTarget = max(0, min(scrollTarget, maxScroll))
+        startScrollAnimation()
+    }
+
+    private func startScrollAnimation() {
+        guard scrollAnimationTimer == nil else { return }
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now(), repeating: 1.0 / 60.0)
+        timer.setEventHandler { [weak self] in
+            self?.updateScrollAnimation()
+        }
+        timer.resume()
+        scrollAnimationTimer = timer
+    }
+
+    private func updateScrollAnimation() {
+        let current = gridLayout.scrollOffset
+        let diff = scrollTarget - current
+
+        if abs(diff) < 0.5 {
+            gridLayout.scrollOffset = scrollTarget
+            gridLayout.clampScroll()
+            scrollAnimationTimer?.cancel()
+            scrollAnimationTimer = nil
+        } else {
+            gridLayout.scrollOffset += diff * 0.22
+            gridLayout.clampScroll()
+        }
+
+        if let view = window?.contentView as? MTKView {
+            view.needsDisplay = true
+        }
+    }
+
+    private func stopScrollAnimation() {
+        scrollAnimationTimer?.cancel()
+        scrollAnimationTimer = nil
+        scrollTarget = gridLayout.scrollOffset
     }
 
     // MARK: - Chrome Auto-Hide
