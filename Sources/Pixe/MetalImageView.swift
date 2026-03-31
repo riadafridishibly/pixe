@@ -81,6 +81,10 @@ class MetalImageView: MTKView {
         inputHandler?.handleRightMouseDown(event: event, view: self)
     }
 
+    override func otherMouseDown(with event: NSEvent) {
+        inputHandler?.handleOtherMouseDown(event: event, view: self)
+    }
+
     // MARK: - Cursor
 
     override func resetCursorRects() {

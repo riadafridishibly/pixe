@@ -660,6 +660,33 @@ class InputHandler: NSObject {
         menu.popUp(positioning: nil, at: view.convert(event.locationInWindow, from: nil), in: view)
     }
 
+    func handleOtherMouseDown(event: NSEvent, view: MTKView) {
+        guard let renderer = renderer else { return }
+        // Mouse button 3 = back, button 4 = forward
+        switch event.buttonNumber {
+        case 3:
+            switch renderer.mode {
+            case .thumbnail:
+                renderer.gridLayout.moveLeft()
+                renderer.updateInfoBar()
+                view.needsDisplay = true
+            case .image:
+                navigate(direction: -1, view: view)
+            }
+        case 4:
+            switch renderer.mode {
+            case .thumbnail:
+                renderer.gridLayout.moveRight()
+                renderer.updateInfoBar()
+                view.needsDisplay = true
+            case .image:
+                navigate(direction: 1, view: view)
+            }
+        default:
+            break
+        }
+    }
+
     private func buildContextMenu(renderer: Renderer) -> NSMenu {
         let menu = NSMenu()
 
