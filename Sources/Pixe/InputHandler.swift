@@ -554,23 +554,16 @@ class InputHandler: NSObject {
 
         guard let hitIndex = renderer.gridLayout.itemIndex(at: pt) else { return }
 
-        if event.clickCount == 2 {
-            renderer.enterImageMode(at: hitIndex)
-        } else {
-            renderer.gridLayout.selectedIndex = hitIndex
-            renderer.gridLayout.scrollToSelection()
-            renderer.updateInfoBar()
-            view.needsDisplay = true
-        }
+        renderer.enterImageMode(at: hitIndex)
     }
 
     private func handleImageMouseDown(event: NSEvent, view: MTKView) {
         guard let renderer = renderer else { return }
         let local = view.convert(event.locationInWindow, from: nil)
         let xFrac = local.x / view.bounds.width
-
-        // Edge zones: always navigate (single or double click)
         let edgeZone: CGFloat = 0.15
+
+        // Edge zones: always navigate (any click count)
         if xFrac < edgeZone && renderer.hasMultipleImages {
             navigate(direction: -1, view: view)
             return
@@ -580,8 +573,8 @@ class InputHandler: NSObject {
             return
         }
 
-        // Center region: double-click returns to grid
-        if event.clickCount == 2 && renderer.hasMultipleImages {
+        // Center zone: click returns to grid
+        if renderer.hasMultipleImages {
             renderer.enterThumbnailMode()
         }
     }

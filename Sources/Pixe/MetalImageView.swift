@@ -25,12 +25,14 @@ class MetalImageView: MTKView {
         let magnification = NSMagnificationGestureRecognizer(
             target: self, action: #selector(handleMagnification(_:))
         )
+        magnification.delaysPrimaryMouseButtonEvents = false
         addGestureRecognizer(magnification)
 
         let pan = NSPanGestureRecognizer(
             target: self, action: #selector(handlePan(_:))
         )
         pan.numberOfTouchesRequired = 2
+        pan.delaysPrimaryMouseButtonEvents = false
         addGestureRecognizer(pan)
     }
 
