@@ -276,15 +276,16 @@ enum ShaderSource {
         if (nav.pointsLeft == 0) p.x = -p.x;
 
         float angleDeg = 50.0;
-        float size = 0.32;
-        float thickness = 0.018;
+        float size = 0.2;
+        float thickness = 0.012;
 
         float angle = angleDeg * M_PI_F / 180.0;
 
         float2 dir1 = normalize(float2(cos(angle),  sin(angle)));
         float2 dir2 = normalize(float2(cos(angle), -sin(angle)));
 
-        float2 tip = float2(-0.15, 0.0);
+        // Center the whole chevron: shift tip left by half the arm's x-extent
+        float2 tip = float2(-cos(angle) * size * 0.5, 0.0);
 
         float2 a = tip + dir1 * size;
         float2 b = tip;
@@ -296,12 +297,27 @@ enum ShaderSource {
         );
 
         float edge = fwidth(d);
+
+        // Dark shadow (wider) behind white chevron — visible on any background
+        float shadowThickness = thickness + 0.025;
+        float shadow = smoothstep(shadowThickness + edge, shadowThickness - edge, d);
         float chevron = smoothstep(thickness + edge, thickness - edge, d);
 
-        // Uniform dark overlay + near-black chevron on top
+        // Layer: dark overlay → dark shadow → white chevron
         float overlay = 0.25;
-        float overlayAlpha = (overlay + chevron * 0.65) * nav.alpha;
-        return float4(0.0, 0.0, 0.0, overlayAlpha);
+        // Blend layers back-to-front
+        float3 color = float3(0.0);  // dark overlay base
+        float alpha = overlay;
+
+        // Shadow: darker halo around chevron
+        color = mix(color, float3(0.0), shadow);
+        alpha = mix(alpha, 0.85, shadow);
+
+        // Chevron: white on top
+        color = mix(color, float3(0.9), chevron);
+        alpha = mix(alpha, 0.95, chevron);
+
+        return float4(color, alpha * nav.alpha);
     }
     """
 }
