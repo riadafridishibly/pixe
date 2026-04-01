@@ -201,7 +201,8 @@ class Renderer: NSObject, MTKViewDelegate {
         } else {
             gridLayout = GridLayout()
         }
-        gridLayout.padding = config.gap
+        gridLayout.gap = config.gap
+        gridLayout.padding = config.padding
         if let name = config.selectionEffect,
            let effect = SelectionEffect.allCases.first(where: { $0.label == name }) {
             selectionEffect = effect
