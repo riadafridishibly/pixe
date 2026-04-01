@@ -1,12 +1,42 @@
 import AppKit
 import MetalKit
 
+struct HorizontalGestureNavigator {
+    private(set) var accumulatedX: Float = 0
+    private(set) var accumulatedY: Float = 0
+    private(set) var didTrigger = false
+
+    private let threshold: Float = 0.12
+    private let horizontalBias: Float = 1.35
+
+    mutating func reset() {
+        accumulatedX = 0
+        accumulatedY = 0
+        didTrigger = false
+    }
+
+    mutating func consume(normalizedDeltaX: Float, normalizedDeltaY: Float) -> Int? {
+        guard !didTrigger else { return nil }
+
+        accumulatedX += normalizedDeltaX
+        accumulatedY += normalizedDeltaY
+
+        guard abs(accumulatedX) >= threshold else { return nil }
+        guard abs(accumulatedX) > abs(accumulatedY) * horizontalBias else { return nil }
+
+        didTrigger = true
+        return accumulatedX > 0 ? -1 : 1
+    }
+}
+
 class InputHandler: NSObject {
     weak var renderer: Renderer?
     private var magnificationAnchor: Float = 1.0
     private var filenameSearchBuffer = ""
     private var filenameSearchActive = false
     private var filenameSearchStartIndex: Int?
+    private var imagePanNavigator = HorizontalGestureNavigator()
+    private var imageScrollNavigator = HorizontalGestureNavigator()
 
     /// Currently hovered thumbnail index (nil when cursor is not over any item).
     var hoveredIndex: Int?
@@ -481,14 +511,43 @@ class InputHandler: NSObject {
     }
 
     private func handleImageScroll(event: NSEvent, view: MTKView) {
+        guard let renderer = renderer else { return }
+
+        if event.phase == .began {
+            imageScrollNavigator.reset()
+        }
+
+        defer {
+            if event.phase == .cancelled || (event.phase == .ended && event.momentumPhase == []) || event.momentumPhase == .ended {
+                imageScrollNavigator.reset()
+            }
+        }
+
         if event.phase != [] || event.momentumPhase != [] {
+            if renderer.scale <= 1.0 && renderer.hasMultipleImages {
+                if imageScrollNavigator.didTrigger {
+                    return
+                }
+
+                let normalizedX = Float(event.scrollingDeltaX) / max(Float(view.bounds.width), 1.0)
+                let normalizedY = Float(event.scrollingDeltaY) / max(Float(view.bounds.height), 1.0)
+
+                if let direction = imageScrollNavigator.consume(
+                    normalizedDeltaX: normalizedX,
+                    normalizedDeltaY: normalizedY
+                ) {
+                    navigate(direction: direction, view: view)
+                    return
+                }
+            }
+
             let dx = Float(event.scrollingDeltaX) / Float(view.bounds.width) * 2.0
             let dy = Float(-event.scrollingDeltaY) / Float(view.bounds.height) * 2.0
-            renderer?.panBy(dx: dx, dy: dy)
+            renderer.panBy(dx: dx, dy: dy)
             view.needsDisplay = true
         } else {
             let zoomFactor: Float = 1.0 + Float(event.scrollingDeltaY) * 0.05
-            renderer?.zoomBy(factor: zoomFactor)
+            renderer.zoomBy(factor: zoomFactor)
             view.needsDisplay = true
         }
     }
@@ -525,20 +584,37 @@ class InputHandler: NSObject {
     }
 
     func handlePan(gesture: NSPanGestureRecognizer, view: MTKView) {
-        guard renderer?.mode == .image else { return }
+        guard let renderer = renderer, renderer.mode == .image else { return }
 
         switch gesture.state {
         case .began:
-            NSCursor.closedHand.set()
+            imagePanNavigator.reset()
+            if renderer.scale > 1.0 {
+                NSCursor.closedHand.set()
+            } else {
+                NSCursor.arrow.set()
+            }
         case .changed:
             let t = gesture.translation(in: view)
+            gesture.setTranslation(.zero, in: view)
             let dx = Float(t.x) / Float(view.bounds.width) * 2.0
             let dy = Float(t.y) / Float(view.bounds.height) * 2.0
-            renderer?.panBy(dx: dx, dy: dy)
-            gesture.setTranslation(.zero, in: view)
+
+            if renderer.scale <= 1.0 && renderer.hasMultipleImages {
+                if let direction = imagePanNavigator.consume(
+                    normalizedDeltaX: dx * 0.5,
+                    normalizedDeltaY: dy * 0.5
+                ) {
+                    navigate(direction: direction, view: view)
+                }
+                return
+            }
+
+            renderer.panBy(dx: dx, dy: dy)
             view.needsDisplay = true
         case .ended, .cancelled:
-            if renderer?.scale ?? 1.0 > 1.0 {
+            imagePanNavigator.reset()
+            if renderer.scale > 1.0 {
                 NSCursor.openHand.set()
             } else {
                 NSCursor.arrow.set()
