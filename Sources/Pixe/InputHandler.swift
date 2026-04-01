@@ -14,6 +14,8 @@ class InputHandler: NSObject {
     var mouseInLeftEdge = false
     /// Whether the mouse cursor is in the right edge zone (image mode nav).
     var mouseInRightEdge = false
+    /// Whether a mouse drag occurred since the last mouseDown.
+    private var didDragSinceMouseDown = false
 
     init(renderer: Renderer) {
         self.renderer = renderer
@@ -539,13 +541,47 @@ class InputHandler: NSObject {
 
     func handleMouseDown(event: NSEvent, view: MTKView) {
         guard let renderer = renderer else { return }
+        didDragSinceMouseDown = false
 
         switch renderer.mode {
         case .thumbnail:
             handleThumbnailMouseDown(event: event, view: view)
         case .image:
-            handleImageMouseDown(event: event, view: view)
+            // When zoomed, set drag cursor; otherwise defer action to mouseUp
+            if renderer.scale > 1.0 {
+                NSCursor.closedHand.set()
+            }
         }
+    }
+
+    func handleMouseDragged(event: NSEvent, view: MTKView) {
+        guard let renderer = renderer, renderer.mode == .image else { return }
+        didDragSinceMouseDown = true
+
+        if renderer.scale > 1.0 {
+            let dx = Float(event.deltaX) / Float(view.bounds.width) * 2.0
+            let dy = Float(-event.deltaY) / Float(view.bounds.height) * 2.0
+            renderer.panBy(dx: dx, dy: dy)
+            view.needsDisplay = true
+        }
+    }
+
+    func handleMouseUp(event: NSEvent, view: MTKView) {
+        guard let renderer = renderer else { return }
+
+        switch renderer.mode {
+        case .thumbnail:
+            break
+        case .image:
+            if renderer.scale > 1.0 {
+                NSCursor.openHand.set()
+            }
+            // Only trigger click actions if user didn't drag
+            if !didDragSinceMouseDown {
+                handleImageMouseClick(event: event, view: view)
+            }
+        }
+        didDragSinceMouseDown = false
     }
 
     private func handleThumbnailMouseDown(event: NSEvent, view: MTKView) {
@@ -557,7 +593,7 @@ class InputHandler: NSObject {
         renderer.enterImageMode(at: hitIndex)
     }
 
-    private func handleImageMouseDown(event: NSEvent, view: MTKView) {
+    private func handleImageMouseClick(event: NSEvent, view: MTKView) {
         guard let renderer = renderer else { return }
         let local = view.convert(event.locationInWindow, from: nil)
         let xFrac = local.x / view.bounds.width

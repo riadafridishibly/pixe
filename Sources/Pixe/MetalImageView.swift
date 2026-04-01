@@ -69,6 +69,14 @@ class MetalImageView: MTKView {
         inputHandler?.handleMouseDown(event: event, view: self)
     }
 
+    override func mouseDragged(with event: NSEvent) {
+        inputHandler?.handleMouseDragged(event: event, view: self)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        inputHandler?.handleMouseUp(event: event, view: self)
+    }
+
     override func mouseMoved(with event: NSEvent) {
         inputHandler?.handleMouseMoved(event: event, view: self)
     }
