@@ -1116,6 +1116,7 @@ class Renderer: NSObject, MTKViewDelegate {
 
         switch mode {
         case .thumbnail:
+            stopScrollAnimation()
             gridLayout.scrollToSelection()
             updateWindowTitle()
             if let view = window?.contentView as? MTKView { view.needsDisplay = true }
@@ -1178,6 +1179,7 @@ class Renderer: NSObject, MTKViewDelegate {
         gridLayout.totalItems = imageList.count
         preloadAspectsAsync(from: 0)
         if mode == .thumbnail {
+            stopScrollAnimation()
             gridLayout.selectedIndex = imageList.currentIndex
             gridLayout.scrollToSelection()
         }
@@ -1223,6 +1225,7 @@ class Renderer: NSObject, MTKViewDelegate {
 
         switch mode {
         case .thumbnail:
+            stopScrollAnimation()
             gridLayout.selectedIndex = min(activeIndex, imageList.count - 1)
             gridLayout.scrollToSelection()
         case .image:
@@ -1355,6 +1358,7 @@ class Renderer: NSObject, MTKViewDelegate {
         guard hasMultipleImages else { return }
         stopAutoplay()
         finishStripAnimation()
+        stopScrollAnimation()
         resetChrome()
         NSCursor.arrow.set()
         mode = .thumbnail
@@ -1390,11 +1394,16 @@ class Renderer: NSObject, MTKViewDelegate {
     // MARK: - Smooth Scroll
 
     func smoothScrollBy(delta: Float) {
-        scrollTarget = gridLayout.scrollOffset + delta
+        let baseOffset = scrollAnimationTimer == nil ? gridLayout.scrollOffset : scrollTarget
+        scrollTarget = baseOffset + delta
         // Clamp target to valid range
         let maxScroll = max(0, gridLayout.totalHeight - gridLayout.viewportHeight)
         scrollTarget = max(0, min(scrollTarget, maxScroll))
         startScrollAnimation()
+    }
+
+    func cancelThumbnailSmoothScroll() {
+        stopScrollAnimation()
     }
 
     private func startScrollAnimation() {

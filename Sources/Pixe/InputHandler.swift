@@ -33,6 +33,20 @@ class InputHandler: NSObject {
 
     // MARK: - Thumbnail Mode Keys
 
+    private func applyThumbnailGridChange(
+        renderer: Renderer,
+        view: MTKView,
+        updateInfoBar: Bool = true,
+        _ action: () -> Void
+    ) {
+        renderer.cancelThumbnailSmoothScroll()
+        action()
+        if updateInfoBar {
+            renderer.updateInfoBar()
+        }
+        view.needsDisplay = true
+    }
+
     private func handleThumbnailKeyDown(event: NSEvent, view: MTKView) {
         guard let renderer = renderer else { return }
         guard let chars = event.charactersIgnoringModifiers else { return }
@@ -55,24 +69,24 @@ class InputHandler: NSObject {
             view.window?.toggleFullScreen(nil)
 
         case "h":
-            renderer.gridLayout.moveLeft()
-            renderer.updateInfoBar()
-            view.needsDisplay = true
+            applyThumbnailGridChange(renderer: renderer, view: view) {
+                renderer.gridLayout.moveLeft()
+            }
 
         case "j":
-            renderer.gridLayout.moveDown()
-            renderer.updateInfoBar()
-            view.needsDisplay = true
+            applyThumbnailGridChange(renderer: renderer, view: view) {
+                renderer.gridLayout.moveDown()
+            }
 
         case "k":
-            renderer.gridLayout.moveUp()
-            renderer.updateInfoBar()
-            view.needsDisplay = true
+            applyThumbnailGridChange(renderer: renderer, view: view) {
+                renderer.gridLayout.moveUp()
+            }
 
         case "l":
-            renderer.gridLayout.moveRight()
-            renderer.updateInfoBar()
-            view.needsDisplay = true
+            applyThumbnailGridChange(renderer: renderer, view: view) {
+                renderer.gridLayout.moveRight()
+            }
 
         case "o":
             renderer.revealInFinder()
@@ -84,14 +98,14 @@ class InputHandler: NSObject {
             renderer.deleteImage(at: renderer.gridLayout.selectedIndex)
 
         case "n":
-            renderer.gridLayout.pageDown()
-            renderer.updateInfoBar()
-            view.needsDisplay = true
+            applyThumbnailGridChange(renderer: renderer, view: view) {
+                renderer.gridLayout.pageDown()
+            }
 
         case "p":
-            renderer.gridLayout.pageUp()
-            renderer.updateInfoBar()
-            view.needsDisplay = true
+            applyThumbnailGridChange(renderer: renderer, view: view) {
+                renderer.gridLayout.pageUp()
+            }
 
         case "s":
             renderer.toggleShuffle()
@@ -108,33 +122,33 @@ class InputHandler: NSObject {
             view.needsDisplay = true
 
         case "+", "=":
-            renderer.gridLayout.zoomBy(factor: 1.15)
-            renderer.updateInfoBar()
-            view.needsDisplay = true
+            applyThumbnailGridChange(renderer: renderer, view: view) {
+                renderer.gridLayout.zoomBy(factor: 1.15)
+            }
 
         case "-":
-            renderer.gridLayout.zoomBy(factor: 0.87)
-            renderer.updateInfoBar()
-            view.needsDisplay = true
+            applyThumbnailGridChange(renderer: renderer, view: view) {
+                renderer.gridLayout.zoomBy(factor: 0.87)
+            }
 
         case "0":
-            renderer.gridLayout.resetZoom()
-            renderer.updateInfoBar()
-            view.needsDisplay = true
+            applyThumbnailGridChange(renderer: renderer, view: view) {
+                renderer.gridLayout.resetZoom()
+            }
 
         case "g":
-            renderer.gridLayout.goToFirst()
-            renderer.updateInfoBar()
-            view.needsDisplay = true
+            applyThumbnailGridChange(renderer: renderer, view: view) {
+                renderer.gridLayout.goToFirst()
+            }
 
         case "y":
             renderer.copyCurrentImage()
 
         default:
             if event.characters == "G" {
-                renderer.gridLayout.goToLast()
-                renderer.updateInfoBar()
-                view.needsDisplay = true
+                applyThumbnailGridChange(renderer: renderer, view: view) {
+                    renderer.gridLayout.goToLast()
+                }
             } else if event.characters == "Y" {
                 renderer.copyCurrentImagePath()
             } else if event.characters == "I" {
@@ -164,13 +178,14 @@ class InputHandler: NSObject {
                let start = filenameSearchStartIndex,
                start < renderer.imageList.count
             {
-                renderer.gridLayout.selectedIndex = start
-                renderer.gridLayout.scrollToSelection()
+                applyThumbnailGridChange(renderer: renderer, view: view, updateInfoBar: false) {
+                    renderer.gridLayout.selectedIndex = start
+                    renderer.gridLayout.scrollToSelection()
+                }
             } else {
                 jumpToFilenameMatch(prefix: filenameSearchBuffer, renderer: renderer, view: view)
             }
             renderer.setThumbnailSearchQuery(filenameSearchBuffer)
-            view.needsDisplay = true
             return true
 
         case 36, 76:  // Return / Enter
@@ -221,9 +236,10 @@ class InputHandler: NSObject {
             let idx = (start + offset) % paths.count
             let name = (paths[idx] as NSString).lastPathComponent.lowercased()
             if name.hasPrefix(prefix) {
-                renderer.gridLayout.selectedIndex = idx
-                renderer.gridLayout.scrollToSelection()
-                view.needsDisplay = true
+                applyThumbnailGridChange(renderer: renderer, view: view, updateInfoBar: false) {
+                    renderer.gridLayout.selectedIndex = idx
+                    renderer.gridLayout.scrollToSelection()
+                }
                 return
             }
         }
@@ -242,8 +258,10 @@ class InputHandler: NSObject {
 
     private func cancelFilenameSearch(renderer: Renderer, view: MTKView) {
         if let index = filenameSearchStartIndex, index < renderer.imageList.count {
-            renderer.gridLayout.selectedIndex = index
-            renderer.gridLayout.scrollToSelection()
+            applyThumbnailGridChange(renderer: renderer, view: view, updateInfoBar: false) {
+                renderer.gridLayout.selectedIndex = index
+                renderer.gridLayout.scrollToSelection()
+            }
         }
         clearFilenameSearch(renderer: renderer)
         view.needsDisplay = true
@@ -266,21 +284,21 @@ class InputHandler: NSObject {
 
         switch keyCode {
         case 123:  // Left
-            renderer.gridLayout.moveLeft()
-            renderer.updateInfoBar()
-            view.needsDisplay = true
+            applyThumbnailGridChange(renderer: renderer, view: view) {
+                renderer.gridLayout.moveLeft()
+            }
         case 124:  // Right
-            renderer.gridLayout.moveRight()
-            renderer.updateInfoBar()
-            view.needsDisplay = true
+            applyThumbnailGridChange(renderer: renderer, view: view) {
+                renderer.gridLayout.moveRight()
+            }
         case 125:  // Down
-            renderer.gridLayout.moveDown()
-            renderer.updateInfoBar()
-            view.needsDisplay = true
+            applyThumbnailGridChange(renderer: renderer, view: view) {
+                renderer.gridLayout.moveDown()
+            }
         case 126:  // Up
-            renderer.gridLayout.moveUp()
-            renderer.updateInfoBar()
-            view.needsDisplay = true
+            applyThumbnailGridChange(renderer: renderer, view: view) {
+                renderer.gridLayout.moveUp()
+            }
         case 36:  // Enter/Return
             renderer.enterImageMode(at: renderer.gridLayout.selectedIndex)
         default:
@@ -451,6 +469,7 @@ class InputHandler: NSObject {
         if event.phase != [] || event.momentumPhase != [] {
             // Trackpad: already has momentum, apply directly
             let delta = Float(-event.scrollingDeltaY) * 3.0
+            renderer.cancelThumbnailSmoothScroll()
             renderer.gridLayout.scrollBy(delta: delta)
             view.needsDisplay = true
         } else {
@@ -496,9 +515,9 @@ class InputHandler: NSObject {
             switch gesture.state {
             case .changed:
                 let factor = max(0.7, min(1.3, 1.0 + Float(gesture.magnification)))
-                renderer.gridLayout.zoomBy(factor: factor)
-                renderer.updateInfoBar()
-                view.needsDisplay = true
+                applyThumbnailGridChange(renderer: renderer, view: view) {
+                    renderer.gridLayout.zoomBy(factor: factor)
+                }
             default:
                 break
             }
@@ -665,6 +684,14 @@ class InputHandler: NSObject {
 
     func handleRightMouseDown(event: NSEvent, view: MTKView) {
         guard let renderer = renderer else { return }
+        if renderer.mode == .thumbnail {
+            let pt = gridPoint(event: event, view: view)
+            if let hitIndex = renderer.gridLayout.itemIndex(at: pt) {
+                applyThumbnailGridChange(renderer: renderer, view: view) {
+                    renderer.gridLayout.selectedIndex = hitIndex
+                }
+            }
+        }
         let menu = buildContextMenu(renderer: renderer)
         menu.popUp(positioning: nil, at: view.convert(event.locationInWindow, from: nil), in: view)
     }
@@ -676,18 +703,18 @@ class InputHandler: NSObject {
         case 3:
             switch renderer.mode {
             case .thumbnail:
-                renderer.gridLayout.moveLeft()
-                renderer.updateInfoBar()
-                view.needsDisplay = true
+                applyThumbnailGridChange(renderer: renderer, view: view) {
+                    renderer.gridLayout.moveLeft()
+                }
             case .image:
                 navigate(direction: -1, view: view)
             }
         case 4:
             switch renderer.mode {
             case .thumbnail:
-                renderer.gridLayout.moveRight()
-                renderer.updateInfoBar()
-                view.needsDisplay = true
+                applyThumbnailGridChange(renderer: renderer, view: view) {
+                    renderer.gridLayout.moveRight()
+                }
             case .image:
                 navigate(direction: 1, view: view)
             }
@@ -819,23 +846,23 @@ class InputHandler: NSObject {
 
     @objc private func contextZoomIn() {
         guard let renderer = renderer, let view = renderer.window?.contentView as? MTKView else { return }
-        renderer.gridLayout.zoomBy(factor: 1.15)
-        renderer.updateInfoBar()
-        view.needsDisplay = true
+        applyThumbnailGridChange(renderer: renderer, view: view) {
+            renderer.gridLayout.zoomBy(factor: 1.15)
+        }
     }
 
     @objc private func contextZoomOut() {
         guard let renderer = renderer, let view = renderer.window?.contentView as? MTKView else { return }
-        renderer.gridLayout.zoomBy(factor: 0.87)
-        renderer.updateInfoBar()
-        view.needsDisplay = true
+        applyThumbnailGridChange(renderer: renderer, view: view) {
+            renderer.gridLayout.zoomBy(factor: 0.87)
+        }
     }
 
     @objc private func contextResetZoom() {
         guard let renderer = renderer, let view = renderer.window?.contentView as? MTKView else { return }
-        renderer.gridLayout.resetZoom()
-        renderer.updateInfoBar()
-        view.needsDisplay = true
+        applyThumbnailGridChange(renderer: renderer, view: view) {
+            renderer.gridLayout.resetZoom()
+        }
     }
 
     @objc private func contextShuffle() {
