@@ -99,7 +99,18 @@ class MetalImageView: MTKView {
         super.resetCursorRects()
         guard let renderer = inputHandler?.renderer else { return }
         if renderer.mode == .image && renderer.scale > 1.0 {
-            addCursorRect(bounds, cursor: .openHand)
+            let edgeFrac: CGFloat = 0.15
+            let leftEdge = CGRect(x: bounds.minX, y: bounds.minY,
+                                  width: bounds.width * edgeFrac, height: bounds.height)
+            let rightEdge = CGRect(x: bounds.maxX - bounds.width * edgeFrac, y: bounds.minY,
+                                   width: bounds.width * edgeFrac, height: bounds.height)
+            let center = CGRect(x: bounds.width * edgeFrac, y: bounds.minY,
+                                width: bounds.width * (1.0 - 2.0 * edgeFrac), height: bounds.height)
+            addCursorRect(center, cursor: .openHand)
+            if renderer.hasMultipleImages {
+                addCursorRect(leftEdge, cursor: .arrow)
+                addCursorRect(rightEdge, cursor: .arrow)
+            }
         }
     }
 

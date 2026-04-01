@@ -544,17 +544,14 @@ class InputHandler: NSObject {
         case .thumbnail:
             handleThumbnailMouseDown(event: event, view: view)
         case .image:
-            if renderer.scale > 1.0 {
-                NSCursor.closedHand.set()
-            } else {
-                handleImageMouseDown(event: event, view: view)
-            }
+            handleImageMouseDown(event: event, view: view)
         }
     }
 
     func handleMouseDragged(event: NSEvent, view: MTKView) {
         guard let renderer = renderer, renderer.mode == .image, renderer.scale > 1.0 else { return }
 
+        NSCursor.closedHand.set()
         let dx = Float(event.deltaX) / Float(view.bounds.width) * 2.0
         let dy = Float(-event.deltaY) / Float(view.bounds.height) * 2.0
         renderer.panBy(dx: dx, dy: dy)
@@ -562,12 +559,9 @@ class InputHandler: NSObject {
     }
 
     func handleMouseUp(event: NSEvent, view: MTKView) {
-        guard let renderer = renderer, renderer.mode == .image else { return }
-        if renderer.scale > 1.0 {
-            NSCursor.openHand.set()
-        } else {
-            NSCursor.arrow.set()
-        }
+        guard let renderer = renderer, renderer.mode == .image, renderer.scale > 1.0 else { return }
+        // Let cursor rects take over again
+        view.window?.invalidateCursorRects(for: view)
     }
 
     private func handleThumbnailMouseDown(event: NSEvent, view: MTKView) {
@@ -595,10 +589,10 @@ class InputHandler: NSObject {
             return
         }
 
-        // Center zone: click returns to grid
-        if renderer.hasMultipleImages {
-            renderer.enterThumbnailMode()
-        }
+        // Center zone: when zoomed, ignore clicks (drag to pan instead);
+        // otherwise click returns to grid
+        if !renderer.hasMultipleImages || renderer.scale > 1.0 { return }
+        renderer.enterThumbnailMode()
     }
 
     // MARK: - Mouse Move / Hover

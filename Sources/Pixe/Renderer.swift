@@ -777,6 +777,7 @@ class Renderer: NSObject, MTKViewDelegate {
         scale = 1.0
         translation = .zero
         rotationSteps = 0
+        invalidateCursorRects()
     }
 
     func rotateCW() {
@@ -1525,11 +1526,13 @@ class Renderer: NSObject, MTKViewDelegate {
         scale *= factor
         scale = max(0.1, min(scale, 50.0))
         if scale > 1.0 { finishStripAnimation() }
+        invalidateCursorRects()
     }
 
     func setScale(_ newScale: Float) {
         scale = max(0.1, min(newScale, 50.0))
         if scale > 1.0 { finishStripAnimation() }
+        invalidateCursorRects()
     }
 
     func panBy(dx: Float, dy: Float) {
