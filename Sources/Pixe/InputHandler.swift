@@ -562,8 +562,12 @@ class InputHandler: NSObject {
     }
 
     func handleMouseUp(event: NSEvent, view: MTKView) {
-        guard let renderer = renderer, renderer.mode == .image, renderer.scale > 1.0 else { return }
-        NSCursor.openHand.set()
+        guard let renderer = renderer, renderer.mode == .image else { return }
+        if renderer.scale > 1.0 {
+            NSCursor.openHand.set()
+        } else {
+            NSCursor.arrow.set()
+        }
     }
 
     private func handleThumbnailMouseDown(event: NSEvent, view: MTKView) {

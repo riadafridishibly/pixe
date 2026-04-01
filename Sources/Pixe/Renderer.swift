@@ -1355,6 +1355,7 @@ class Renderer: NSObject, MTKViewDelegate {
         stopAutoplay()
         finishStripAnimation()
         resetChrome()
+        NSCursor.arrow.set()
         mode = .thumbnail
         startSelectionAnimation()
         gridLayout.selectedIndex = imageList.currentIndex
