@@ -51,7 +51,7 @@ extension Renderer {
         }
 
         // Chrome: navigation buttons
-        if config.chrome && chromeNavButtonAlpha > 0.01 {
+        if chromeNavButtonAlpha > 0.01 {
             drawNavButtons(encoder: encoder)
         }
 
@@ -254,8 +254,7 @@ extension Renderer {
         }
 
         // Chrome: hover highlight
-        if config.chrome,
-           let inputHandler = (view as? MetalImageView)?.inputHandler,
+        if let inputHandler = (view as? MetalImageView)?.inputHandler,
            let hoverIdx = inputHandler.hoveredIndex,
            hoverIdx != gridLayout.selectedIndex,
            visible.contains(hoverIdx) {
@@ -263,7 +262,7 @@ extension Renderer {
         }
 
         // Chrome: scrollbar
-        if config.chrome && chromeScrollbarAlpha > 0.01 {
+        if chromeScrollbarAlpha > 0.01 {
             drawScrollbar(encoder: encoder)
         }
 

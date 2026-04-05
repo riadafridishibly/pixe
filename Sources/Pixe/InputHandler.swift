@@ -705,7 +705,6 @@ class InputHandler: NSObject {
 
     private func handleThumbnailMouseMoved(event: NSEvent, view: MTKView) {
         guard let renderer = renderer else { return }
-        guard renderer.config.chrome else { return }
 
         let pt = gridPoint(event: event, view: view)
         let newHover = renderer.gridLayout.itemIndex(at: pt)
@@ -720,7 +719,6 @@ class InputHandler: NSObject {
 
     private func handleImageMouseMoved(event: NSEvent, view: MTKView) {
         guard let renderer = renderer else { return }
-        guard renderer.config.chrome else { return }
 
         let local = view.convert(event.locationInWindow, from: nil)
         let xFrac = Float(local.x / view.bounds.width)
@@ -751,9 +749,7 @@ class InputHandler: NSObject {
         }
         mouseInLeftEdge = false
         mouseInRightEdge = false
-        if renderer.config.chrome {
-            renderer.scheduleHideNavButtons()
-        }
+        renderer.scheduleHideNavButtons()
     }
 
     // MARK: - Context Menu

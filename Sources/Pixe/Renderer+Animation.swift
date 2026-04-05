@@ -153,7 +153,6 @@ extension Renderer {
     // MARK: - Chrome Auto-Hide
 
     func showScrollbar() {
-        guard config.chrome else { return }
         chromeScrollbarTarget = 0.6
         startChromeAnimation()
         // Reset hide timer
@@ -169,7 +168,6 @@ extension Renderer {
     }
 
     func showNavButtons() {
-        guard config.chrome else { return }
         chromeNavButtonTarget = 0.7
         startChromeAnimation()
         navButtonHideTimer?.cancel()
@@ -177,7 +175,6 @@ extension Renderer {
     }
 
     func scheduleHideNavButtons() {
-        guard config.chrome else { return }
         navButtonHideTimer?.cancel()
         let timer = DispatchSource.makeTimerSource(queue: .main)
         timer.schedule(deadline: .now() + 1.0)

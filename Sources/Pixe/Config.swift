@@ -63,7 +63,6 @@ struct Config {
     let selectionEffect: String?
     let strip: Bool
     let stripGap: Float
-    let chrome: Bool
     let quiet: Bool
     let configFileLoaded: Bool
     let configFileFlags: [String]
@@ -173,7 +172,6 @@ struct Config {
         var selectionEffect: String?
         var strip = false
         var stripGap: Float = 20.0
-        var chrome = true
         var imageArguments: [String] = []
         var includeExts: Set<String>?
         var excludeExts: Set<String>?
@@ -354,8 +352,6 @@ struct Config {
             case "--selection-effect":
                 i += 1
                 if i < allArgs.count { selectionEffect = allArgs[i] }
-            case "--no-chrome":
-                chrome = false
             case "--strip":
                 strip = true
             case let a where a.hasPrefix("--strip-gap="):
@@ -423,7 +419,6 @@ struct Config {
             selectionEffect: selectionEffect,
             strip: strip,
             stripGap: stripGap,
-            chrome: chrome,
             quiet: quiet,
             configFileLoaded: configFileLoaded,
             configFileFlags: configFileArgs,
@@ -525,7 +520,6 @@ struct Config {
           --gap <points>       Gap between thumbnails in points (default: 2, min: 0)
           --padding <points>   Padding at window edges around the thumbnail grid (default: 2, min: 0)
           --selection-effect <name>  Selection border style: rainbow, glow, solid (default: rainbow)
-          --no-chrome           Disable mouse UI chrome (scrollbar, nav buttons, hover highlight)
           --strip              Show neighboring images in image view (infinite strip)
           --strip-gap <points> Gap between images in strip view (default: 20, min: 0)
           --shuffle            Start with images in random order
