@@ -168,6 +168,13 @@ class Renderer: NSObject, MTKViewDelegate {
     var stripAnimationFrom: Float = 0
     let stripAnimationDuration: TimeInterval = 0.25
 
+    // Swipe gesture state
+    var swipeActive: Bool = false
+    var swipeTemporaryStrip: Bool = false
+    var swipeVelocity: Float = 0
+    var swipeSettling: Bool = false  // one-way latch: once true, stays true until animation ends
+    var swipeSettleTimer: DispatchSourceTimer?
+
     // Smooth scroll state
     var scrollTarget: Float = 0.0
     var scrollAnimationTimer: DispatchSourceTimer?

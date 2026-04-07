@@ -47,10 +47,8 @@ extension Renderer {
     func navigateWithStripAnimation(direction: Int) {
         guard imageList.count > 1 else { return }
 
-        // If already animating, finish instantly and start a new animation
-        if isStripAnimating {
-            finishStripAnimation()
-        }
+        // Clean up any ongoing animation or swipe gesture
+        finishStripAnimation()
 
         // Compute the distance in NDC between old current and new current BEFORE advancing
         let oldAspect = imageAspect
@@ -107,9 +105,185 @@ extension Renderer {
     func finishStripAnimation() {
         stripAnimationTimer?.cancel()
         stripAnimationTimer = nil
+        swipeSettleTimer?.cancel()
+        swipeSettleTimer = nil
+        swipeActive = false
+        swipeTemporaryStrip = false
+        swipeVelocity = 0
+        swipeSettling = false
         stripOffset = 0
         if let view = window?.contentView as? MTKView {
             view.needsDisplay = true
+        }
+    }
+
+    // MARK: - Swipe Gesture
+
+    func beginSwipeGesture() {
+        stopAutoplay()
+        stripAnimationTimer?.cancel()
+        stripAnimationTimer = nil
+        // If a settle was in flight, keep stripOffset so user can catch it
+        if swipeSettleTimer != nil {
+            swipeSettleTimer?.cancel()
+            swipeSettleTimer = nil
+        }
+        swipeActive = true
+        swipeVelocity = 0
+        swipeSettling = false
+        if !config.strip {
+            swipeTemporaryStrip = true
+        }
+    }
+
+    func updateSwipeGesture(deltaNDC: Float) {
+        stripOffset += deltaNDC
+        checkSwipeBoundaryCrossing()
+        if let view = window?.contentView as? MTKView {
+            view.needsDisplay = true
+        }
+    }
+
+    func endSwipeGesture(velocityNDC: Float) {
+        swipeActive = false
+
+        // Quick exit if barely moved
+        if abs(stripOffset) < 0.001 && abs(velocityNDC) < 0.1 {
+            stripOffset = 0
+            swipeVelocity = 0
+            swipeTemporaryStrip = false
+            if let view = window?.contentView as? MTKView {
+                view.needsDisplay = true
+            }
+            return
+        }
+
+        // Let momentum + boundary crossing handle navigation naturally.
+        // Fast flicks carry through multiple images; slow releases snap to nearest.
+        swipeVelocity = velocityNDC
+        swipeSettling = false
+        startSwipeAnimation()
+    }
+
+    func cancelSwipeGesture() {
+        swipeActive = false
+        swipeVelocity = 0
+        swipeSettling = false
+        stripOffset = 0
+        swipeTemporaryStrip = false
+        if let view = window?.contentView as? MTKView {
+            view.needsDisplay = true
+        }
+    }
+
+    /// Navigate the image list when the strip scrolls past the midpoint between images.
+    private func checkSwipeBoundaryCrossing() {
+        let count = imageList.count
+        guard count > 1 else { return }
+
+        while true {
+            var crossed = false
+            if stripOffset > 0 {
+                let prevIdx = (imageList.currentIndex - 1 + count) % count
+                let prevAspect = aspectForIndex(prevIdx)
+                let dist = stripSlotDistance(leftAspect: prevAspect, rightAspect: imageAspect)
+                if stripOffset > dist * 0.5 {
+                    imageList.goPrevious()
+                    loadCurrentImage()
+                    stripOffset -= dist
+                    crossed = true
+                }
+            } else if stripOffset < 0 {
+                let nextIdx = (imageList.currentIndex + 1) % count
+                let nextAspect = aspectForIndex(nextIdx)
+                let dist = stripSlotDistance(leftAspect: imageAspect, rightAspect: nextAspect)
+                if -stripOffset > dist * 0.5 {
+                    imageList.goNext()
+                    loadCurrentImage()
+                    stripOffset += dist
+                    crossed = true
+                }
+            }
+            if !crossed { break }
+        }
+    }
+
+    private func startSwipeAnimation() {
+        guard swipeSettleTimer == nil else { return }
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now(), repeating: 1.0 / 60.0)
+        timer.setEventHandler { [weak self] in
+            self?.updateSwipeAnimation()
+        }
+        timer.resume()
+        swipeSettleTimer = timer
+    }
+
+    /// Navigate to neighbor if offset is past 40% of slot distance when momentum ends.
+    private func snapToNearestIfClose() {
+        let count = imageList.count
+        guard count > 1 else { return }
+
+        if stripOffset > 0 {
+            let prevIdx = (imageList.currentIndex - 1 + count) % count
+            let prevAspect = aspectForIndex(prevIdx)
+            let dist = stripSlotDistance(leftAspect: prevAspect, rightAspect: imageAspect)
+            if stripOffset > dist * 0.4 {
+                imageList.goPrevious()
+                loadCurrentImage()
+                stripOffset -= dist
+            }
+        } else if stripOffset < 0 {
+            let nextIdx = (imageList.currentIndex + 1) % count
+            let nextAspect = aspectForIndex(nextIdx)
+            let dist = stripSlotDistance(leftAspect: imageAspect, rightAspect: nextAspect)
+            if -stripOffset > dist * 0.4 {
+                imageList.goNext()
+                loadCurrentImage()
+                stripOffset += dist
+            }
+        }
+    }
+
+    private func updateSwipeAnimation() {
+        let dt: Float = 1.0 / 60.0
+
+        if !swipeSettling {
+            // Momentum phase: friction deceleration, images flow past
+            stripOffset += swipeVelocity * dt
+            swipeVelocity *= 0.98
+            checkSwipeBoundaryCrossing()
+
+            // One-way transition: once settling, never go back to momentum
+            if abs(swipeVelocity) < 0.5 {
+                swipeSettling = true
+                snapToNearestIfClose()
+            }
+        } else {
+            // Settle phase: critically-damped spring snaps to center.
+            // The spring may generate high internal velocities — that's fine,
+            // the one-way latch keeps us here until convergence.
+            let omegaN: Float = 25.0
+            let zeta: Float = 1.0
+            let accel = -omegaN * omegaN * stripOffset - 2.0 * zeta * omegaN * swipeVelocity
+            swipeVelocity += accel * dt
+            stripOffset += swipeVelocity * dt
+        }
+
+        if let view = window?.contentView as? MTKView {
+            view.needsDisplay = true
+        }
+
+        if abs(stripOffset) < 0.0005 && abs(swipeVelocity) < 0.05 {
+            swipeSettleTimer?.cancel()
+            swipeSettleTimer = nil
+            stripOffset = 0
+            swipeVelocity = 0
+            swipeSettling = false
+            swipeTemporaryStrip = false
+            if let view = window?.contentView as? MTKView {
+                view.needsDisplay = true
+            }
         }
     }
 

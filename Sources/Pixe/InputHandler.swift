@@ -1,42 +1,28 @@
 import AppKit
 import MetalKit
 
-struct HorizontalGestureNavigator {
-    private(set) var accumulatedX: Float = 0
-    private(set) var accumulatedY: Float = 0
-    private(set) var didTrigger = false
-
-    private let threshold: Float = 0.12
-    private let horizontalBias: Float = 1.35
-
-    mutating func reset() {
-        accumulatedX = 0
-        accumulatedY = 0
-        didTrigger = false
-    }
-
-    mutating func consume(normalizedDeltaX: Float, normalizedDeltaY: Float) -> Int? {
-        guard !didTrigger else { return nil }
-
-        accumulatedX += normalizedDeltaX
-        accumulatedY += normalizedDeltaY
-
-        guard abs(accumulatedX) >= threshold else { return nil }
-        guard abs(accumulatedX) > abs(accumulatedY) * horizontalBias else { return nil }
-
-        didTrigger = true
-        return accumulatedX > 0 ? -1 : 1
-    }
-}
-
 class InputHandler: NSObject {
     weak var renderer: Renderer?
     private var magnificationAnchor: Float = 1.0
     private var filenameSearchBuffer = ""
     private var filenameSearchActive = false
     private var filenameSearchStartIndex: Int?
-    private var imagePanNavigator = HorizontalGestureNavigator()
-    private var imageScrollNavigator = HorizontalGestureNavigator()
+
+    // Swipe velocity tracking (shared by pan + scroll gestures)
+    private var swipeVelocitySamples: [(time: CFTimeInterval, delta: Float)] = []
+
+    // Pan gesture direction lock
+    private var panSwipeAccX: Float = 0
+    private var panSwipeAccY: Float = 0
+    private var panSwipeLocked: Bool = false
+    private var panSwipeHorizontal: Bool = false
+
+    // Scroll gesture direction lock
+    private var scrollSwipeTracking: Bool = false
+    private var scrollSwipeAccX: Float = 0
+    private var scrollSwipeAccY: Float = 0
+    private var scrollSwipeLocked: Bool = false
+    private var scrollSwipeHorizontal: Bool = false
 
     /// Currently hovered thumbnail index (nil when cursor is not over any item).
     var hoveredIndex: Int?
@@ -479,6 +465,25 @@ class InputHandler: NSObject {
         }
     }
 
+    // MARK: - Swipe Velocity Tracking
+
+    private func trackSwipeVelocity(delta: Float) {
+        let now = CACurrentMediaTime()
+        swipeVelocitySamples.append((now, delta))
+        let cutoff = now - 0.1
+        swipeVelocitySamples.removeAll { $0.time < cutoff }
+    }
+
+    private func computeSwipeVelocity() -> Float {
+        let now = CACurrentMediaTime()
+        let cutoff = now - 0.08
+        let recent = swipeVelocitySamples.filter { $0.time >= cutoff }
+        guard recent.count >= 2, let first = recent.first else { return 0 }
+        let totalDelta = recent.reduce(Float(0)) { $0 + $1.delta }
+        let elapsed = Float(now - first.time)
+        return elapsed > 0.001 ? totalDelta / elapsed : 0
+    }
+
     // MARK: - Scroll Wheel
 
     func handleScrollWheel(event: NSEvent, view: MTKView) {
@@ -513,42 +518,80 @@ class InputHandler: NSObject {
     private func handleImageScroll(event: NSEvent, view: MTKView) {
         guard let renderer = renderer else { return }
 
-        if event.phase == .began {
-            imageScrollNavigator.reset()
-        }
-
-        defer {
-            if event.phase == .cancelled || (event.phase == .ended && event.momentumPhase == []) || event.momentumPhase == .ended {
-                imageScrollNavigator.reset()
-            }
-        }
-
-        if event.phase != [] || event.momentumPhase != [] {
-            if renderer.scale <= 1.0 && renderer.hasMultipleImages {
-                if imageScrollNavigator.didTrigger {
-                    return
-                }
-
-                let normalizedX = Float(event.scrollingDeltaX) / max(Float(view.bounds.width), 1.0)
-                let normalizedY = Float(event.scrollingDeltaY) / max(Float(view.bounds.height), 1.0)
-
-                if let direction = imageScrollNavigator.consume(
-                    normalizedDeltaX: normalizedX,
-                    normalizedDeltaY: normalizedY
-                ) {
-                    navigate(direction: direction, view: view)
-                    return
-                }
-            }
-
-            let dx = Float(event.scrollingDeltaX) / Float(view.bounds.width) * 2.0
-            let dy = Float(-event.scrollingDeltaY) / Float(view.bounds.height) * 2.0
-            renderer.panBy(dx: dx, dy: dy)
-            view.needsDisplay = true
-        } else {
+        // Discrete mouse wheel (no trackpad phases) → zoom
+        if event.phase == [] && event.momentumPhase == [] {
             let zoomFactor: Float = 1.0 + Float(event.scrollingDeltaY) * 0.05
             renderer.zoomBy(factor: zoomFactor)
             view.needsDisplay = true
+            return
+        }
+
+        // Consume OS momentum while our settle animation runs
+        if event.momentumPhase != [] && (renderer.swipeSettleTimer != nil || scrollSwipeTracking) {
+            return
+        }
+
+        // Start swipe tracking on trackpad gesture begin
+        if event.phase == .began && renderer.scale <= 1.0
+            && renderer.hasMultipleImages && renderer.rotationSteps == 0
+        {
+            renderer.beginSwipeGesture()
+            scrollSwipeTracking = true
+            scrollSwipeAccX = 0
+            scrollSwipeAccY = 0
+            scrollSwipeLocked = false
+            scrollSwipeHorizontal = false
+            swipeVelocitySamples.removeAll()
+        }
+
+        // Process swipe while tracking
+        if scrollSwipeTracking {
+            if event.phase == .ended || event.phase == .cancelled {
+                scrollSwipeTracking = false
+                if renderer.swipeActive {
+                    if event.phase == .ended && scrollSwipeLocked && scrollSwipeHorizontal {
+                        let velocity = computeSwipeVelocity()
+                        renderer.endSwipeGesture(velocityNDC: velocity)
+                    } else {
+                        renderer.cancelSwipeGesture()
+                    }
+                }
+                return
+            }
+
+            if event.phase != [] {
+                let dx = Float(event.scrollingDeltaX) / Float(view.bounds.width) * 2.0
+                let dy = Float(event.scrollingDeltaY) / Float(view.bounds.height) * 2.0
+
+                if !scrollSwipeLocked {
+                    scrollSwipeAccX += abs(dx)
+                    scrollSwipeAccY += abs(dy)
+                    if scrollSwipeAccX + scrollSwipeAccY > 0.005 {
+                        scrollSwipeHorizontal = scrollSwipeAccX > scrollSwipeAccY * 1.2
+                        scrollSwipeLocked = true
+                        if !scrollSwipeHorizontal {
+                            renderer.cancelSwipeGesture()
+                            scrollSwipeTracking = false
+                        }
+                    }
+                }
+
+                if scrollSwipeTracking && scrollSwipeLocked && scrollSwipeHorizontal {
+                    trackSwipeVelocity(delta: dx)
+                    renderer.updateSwipeGesture(deltaNDC: dx)
+                }
+            }
+            return
+        }
+
+        // Default: pan when zoomed in
+        if event.phase != [] || event.momentumPhase != [] {
+            if renderer.scale > 1.0 {
+                let dx = Float(event.scrollingDeltaX) / Float(view.bounds.width) * 2.0
+                let dy = Float(-event.scrollingDeltaY) / Float(view.bounds.height) * 2.0
+                renderer.panBy(dx: dx, dy: dy)
+                view.needsDisplay = true
+            }
         }
     }
 
@@ -588,37 +631,61 @@ class InputHandler: NSObject {
 
         switch gesture.state {
         case .began:
-            imagePanNavigator.reset()
             if renderer.scale > 1.0 {
                 NSCursor.closedHand.set()
-            } else {
-                NSCursor.arrow.set()
+            } else if renderer.hasMultipleImages && renderer.rotationSteps == 0 {
+                renderer.beginSwipeGesture()
+                panSwipeAccX = 0
+                panSwipeAccY = 0
+                panSwipeLocked = false
+                panSwipeHorizontal = false
+                swipeVelocitySamples.removeAll()
             }
+
         case .changed:
             let t = gesture.translation(in: view)
             gesture.setTranslation(.zero, in: view)
             let dx = Float(t.x) / Float(view.bounds.width) * 2.0
             let dy = Float(t.y) / Float(view.bounds.height) * 2.0
 
-            if renderer.scale <= 1.0 && renderer.hasMultipleImages {
-                if let direction = imagePanNavigator.consume(
-                    normalizedDeltaX: dx * 0.5,
-                    normalizedDeltaY: dy * 0.5
-                ) {
-                    navigate(direction: direction, view: view)
+            if renderer.scale > 1.0 {
+                renderer.panBy(dx: dx, dy: dy)
+                view.needsDisplay = true
+            } else if renderer.swipeActive {
+                if !panSwipeLocked {
+                    panSwipeAccX += abs(dx)
+                    panSwipeAccY += abs(dy)
+                    if panSwipeAccX + panSwipeAccY > 0.02 {
+                        panSwipeHorizontal = panSwipeAccX > panSwipeAccY * 1.2
+                        panSwipeLocked = true
+                        if !panSwipeHorizontal {
+                            renderer.cancelSwipeGesture()
+                            return
+                        }
+                    }
                 }
-                return
+                if panSwipeLocked && panSwipeHorizontal {
+                    trackSwipeVelocity(delta: dx)
+                    renderer.updateSwipeGesture(deltaNDC: dx)
+                }
             }
 
-            renderer.panBy(dx: dx, dy: dy)
-            view.needsDisplay = true
         case .ended, .cancelled:
-            imagePanNavigator.reset()
+            if renderer.swipeActive {
+                if gesture.state == .ended && panSwipeLocked && panSwipeHorizontal {
+                    let v = gesture.velocity(in: view)
+                    let vNDC = Float(v.x) / Float(view.bounds.width) * 2.0
+                    renderer.endSwipeGesture(velocityNDC: vNDC)
+                } else {
+                    renderer.cancelSwipeGesture()
+                }
+            }
             if renderer.scale > 1.0 {
                 NSCursor.openHand.set()
             } else {
                 NSCursor.arrow.set()
             }
+
         default:
             break
         }
