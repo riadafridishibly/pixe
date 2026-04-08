@@ -175,6 +175,7 @@ pixe --autoplay-interval 5 ~/Pictures # Slideshow with 5s interval
 | `+` `-` `0` | Zoom in / out / fit |
 | `r` | Rotate 90° clockwise (transient) |
 | Pinch / scroll | Zoom |
+| Two-finger swipe left / right | Next / previous image |
 | Two-finger drag | Pan (when zoomed) |
 | `g` / `G` | First / last image |
 | `d` | Delete image (move to trash) |

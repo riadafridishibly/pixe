@@ -14,7 +14,10 @@ class ImageWindow: NSWindow {
 
     init(contentView: NSView) {
         let screenFrame = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1280, height: 800)
-        let windowSize = NSSize(width: 800, height: 600)
+        let windowSize = NSSize(
+            width: round(screenFrame.width * 0.75),
+            height: round(screenFrame.height * 0.75)
+        )
         let windowOrigin = NSPoint(
             x: screenFrame.midX - windowSize.width / 2,
             y: screenFrame.midY - windowSize.height / 2
@@ -41,7 +44,8 @@ class ImageWindow: NSWindow {
     }
 
     private func setupInfoBar() {
-        infoBar = PassthroughVisualEffectView(frame: NSRect(x: 0, y: 0, width: 800, height: 24))
+        let cvWidth = contentView?.bounds.width ?? 800
+        infoBar = PassthroughVisualEffectView(frame: NSRect(x: 0, y: 0, width: cvWidth, height: 24))
         infoBar.material = .hudWindow
         infoBar.blendingMode = .withinWindow
         infoBar.state = .active
@@ -50,7 +54,7 @@ class ImageWindow: NSWindow {
         infoLabel = NSTextField(labelWithString: "")
         infoLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
         infoLabel.textColor = NSColor(white: 0.8, alpha: 1.0)
-        infoLabel.frame = NSRect(x: 10, y: 2, width: 780, height: 18)
+        infoLabel.frame = NSRect(x: 10, y: 2, width: cvWidth - 20, height: 18)
         infoLabel.autoresizingMask = [.width]
 
         infoBar.addSubview(infoLabel)

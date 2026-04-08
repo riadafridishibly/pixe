@@ -25,12 +25,14 @@ class MetalImageView: MTKView {
         let magnification = NSMagnificationGestureRecognizer(
             target: self, action: #selector(handleMagnification(_:))
         )
+        magnification.delaysPrimaryMouseButtonEvents = false
         addGestureRecognizer(magnification)
 
         let pan = NSPanGestureRecognizer(
             target: self, action: #selector(handlePan(_:))
         )
         pan.numberOfTouchesRequired = 2
+        pan.delaysPrimaryMouseButtonEvents = false
         addGestureRecognizer(pan)
     }
 
@@ -44,13 +46,71 @@ class MetalImageView: MTKView {
         inputHandler?.handleKeyDown(event: event, view: self)
     }
 
+    // MARK: - Mouse Events
+
+    private var trackingArea: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let existing = trackingArea {
+            removeTrackingArea(existing)
+        }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        inputHandler?.handleMouseDown(event: event, view: self)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        inputHandler?.handleMouseDragged(event: event, view: self)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        inputHandler?.handleMouseUp(event: event, view: self)
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        inputHandler?.handleMouseMoved(event: event, view: self)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        inputHandler?.handleMouseExited(view: self)
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        inputHandler?.handleRightMouseDown(event: event, view: self)
+    }
+
+    override func otherMouseDown(with event: NSEvent) {
+        inputHandler?.handleOtherMouseDown(event: event, view: self)
+    }
+
     // MARK: - Cursor
 
     override func resetCursorRects() {
         super.resetCursorRects()
         guard let renderer = inputHandler?.renderer else { return }
         if renderer.mode == .image && renderer.scale > 1.0 {
-            addCursorRect(bounds, cursor: .openHand)
+            let edgeFrac: CGFloat = 0.15
+            let leftEdge = CGRect(x: bounds.minX, y: bounds.minY,
+                                  width: bounds.width * edgeFrac, height: bounds.height)
+            let rightEdge = CGRect(x: bounds.maxX - bounds.width * edgeFrac, y: bounds.minY,
+                                   width: bounds.width * edgeFrac, height: bounds.height)
+            let center = CGRect(x: bounds.width * edgeFrac, y: bounds.minY,
+                                width: bounds.width * (1.0 - 2.0 * edgeFrac), height: bounds.height)
+            addCursorRect(center, cursor: .openHand)
+            if renderer.hasMultipleImages {
+                addCursorRect(leftEdge, cursor: .arrow)
+                addCursorRect(rightEdge, cursor: .arrow)
+            }
         }
     }
 

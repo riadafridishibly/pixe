@@ -1,15 +1,53 @@
 import AppKit
 import MetalKit
 
-class InputHandler {
+struct HorizontalGestureNavigator {
+    private(set) var accumulatedX: Float = 0
+    private(set) var accumulatedY: Float = 0
+    private(set) var didTrigger = false
+
+    private let threshold: Float = 0.12
+    private let horizontalBias: Float = 1.35
+
+    mutating func reset() {
+        accumulatedX = 0
+        accumulatedY = 0
+        didTrigger = false
+    }
+
+    mutating func consume(normalizedDeltaX: Float, normalizedDeltaY: Float) -> Int? {
+        guard !didTrigger else { return nil }
+
+        accumulatedX += normalizedDeltaX
+        accumulatedY += normalizedDeltaY
+
+        guard abs(accumulatedX) >= threshold else { return nil }
+        guard abs(accumulatedX) > abs(accumulatedY) * horizontalBias else { return nil }
+
+        didTrigger = true
+        return accumulatedX > 0 ? -1 : 1
+    }
+}
+
+class InputHandler: NSObject {
     weak var renderer: Renderer?
     private var magnificationAnchor: Float = 1.0
     private var filenameSearchBuffer = ""
     private var filenameSearchActive = false
     private var filenameSearchStartIndex: Int?
+    private var imagePanNavigator = HorizontalGestureNavigator()
+    private var imageScrollNavigator = HorizontalGestureNavigator()
+
+    /// Currently hovered thumbnail index (nil when cursor is not over any item).
+    var hoveredIndex: Int?
+    /// Whether the mouse cursor is in the left edge zone (image mode nav).
+    var mouseInLeftEdge = false
+    /// Whether the mouse cursor is in the right edge zone (image mode nav).
+    var mouseInRightEdge = false
 
     init(renderer: Renderer) {
         self.renderer = renderer
+        super.init()
     }
 
     func handleKeyDown(event: NSEvent, view: MTKView) {
@@ -24,6 +62,20 @@ class InputHandler {
     }
 
     // MARK: - Thumbnail Mode Keys
+
+    private func applyThumbnailGridChange(
+        renderer: Renderer,
+        view: MTKView,
+        updateInfoBar: Bool = true,
+        _ action: () -> Void
+    ) {
+        renderer.cancelThumbnailSmoothScroll()
+        action()
+        if updateInfoBar {
+            renderer.updateInfoBar()
+        }
+        view.needsDisplay = true
+    }
 
     private func handleThumbnailKeyDown(event: NSEvent, view: MTKView) {
         guard let renderer = renderer else { return }
@@ -47,24 +99,24 @@ class InputHandler {
             view.window?.toggleFullScreen(nil)
 
         case "h":
-            renderer.gridLayout.moveLeft()
-            renderer.updateInfoBar()
-            view.needsDisplay = true
+            applyThumbnailGridChange(renderer: renderer, view: view) {
+                renderer.gridLayout.moveLeft()
+            }
 
         case "j":
-            renderer.gridLayout.moveDown()
-            renderer.updateInfoBar()
-            view.needsDisplay = true
+            applyThumbnailGridChange(renderer: renderer, view: view) {
+                renderer.gridLayout.moveDown()
+            }
 
         case "k":
-            renderer.gridLayout.moveUp()
-            renderer.updateInfoBar()
-            view.needsDisplay = true
+            applyThumbnailGridChange(renderer: renderer, view: view) {
+                renderer.gridLayout.moveUp()
+            }
 
         case "l":
-            renderer.gridLayout.moveRight()
-            renderer.updateInfoBar()
-            view.needsDisplay = true
+            applyThumbnailGridChange(renderer: renderer, view: view) {
+                renderer.gridLayout.moveRight()
+            }
 
         case "o":
             renderer.revealInFinder()
@@ -76,14 +128,14 @@ class InputHandler {
             renderer.deleteImage(at: renderer.gridLayout.selectedIndex)
 
         case "n":
-            renderer.gridLayout.pageDown()
-            renderer.updateInfoBar()
-            view.needsDisplay = true
+            applyThumbnailGridChange(renderer: renderer, view: view) {
+                renderer.gridLayout.pageDown()
+            }
 
         case "p":
-            renderer.gridLayout.pageUp()
-            renderer.updateInfoBar()
-            view.needsDisplay = true
+            applyThumbnailGridChange(renderer: renderer, view: view) {
+                renderer.gridLayout.pageUp()
+            }
 
         case "s":
             renderer.toggleShuffle()
@@ -100,33 +152,33 @@ class InputHandler {
             view.needsDisplay = true
 
         case "+", "=":
-            renderer.gridLayout.zoomBy(factor: 1.15)
-            renderer.updateInfoBar()
-            view.needsDisplay = true
+            applyThumbnailGridChange(renderer: renderer, view: view) {
+                renderer.gridLayout.zoomBy(factor: 1.15)
+            }
 
         case "-":
-            renderer.gridLayout.zoomBy(factor: 0.87)
-            renderer.updateInfoBar()
-            view.needsDisplay = true
+            applyThumbnailGridChange(renderer: renderer, view: view) {
+                renderer.gridLayout.zoomBy(factor: 0.87)
+            }
 
         case "0":
-            renderer.gridLayout.resetZoom()
-            renderer.updateInfoBar()
-            view.needsDisplay = true
+            applyThumbnailGridChange(renderer: renderer, view: view) {
+                renderer.gridLayout.resetZoom()
+            }
 
         case "g":
-            renderer.gridLayout.goToFirst()
-            renderer.updateInfoBar()
-            view.needsDisplay = true
+            applyThumbnailGridChange(renderer: renderer, view: view) {
+                renderer.gridLayout.goToFirst()
+            }
 
         case "y":
             renderer.copyCurrentImage()
 
         default:
             if event.characters == "G" {
-                renderer.gridLayout.goToLast()
-                renderer.updateInfoBar()
-                view.needsDisplay = true
+                applyThumbnailGridChange(renderer: renderer, view: view) {
+                    renderer.gridLayout.goToLast()
+                }
             } else if event.characters == "Y" {
                 renderer.copyCurrentImagePath()
             } else if event.characters == "I" {
@@ -156,13 +208,14 @@ class InputHandler {
                let start = filenameSearchStartIndex,
                start < renderer.imageList.count
             {
-                renderer.gridLayout.selectedIndex = start
-                renderer.gridLayout.scrollToSelection()
+                applyThumbnailGridChange(renderer: renderer, view: view, updateInfoBar: false) {
+                    renderer.gridLayout.selectedIndex = start
+                    renderer.gridLayout.scrollToSelection()
+                }
             } else {
                 jumpToFilenameMatch(prefix: filenameSearchBuffer, renderer: renderer, view: view)
             }
             renderer.setThumbnailSearchQuery(filenameSearchBuffer)
-            view.needsDisplay = true
             return true
 
         case 36, 76:  // Return / Enter
@@ -213,9 +266,10 @@ class InputHandler {
             let idx = (start + offset) % paths.count
             let name = (paths[idx] as NSString).lastPathComponent.lowercased()
             if name.hasPrefix(prefix) {
-                renderer.gridLayout.selectedIndex = idx
-                renderer.gridLayout.scrollToSelection()
-                view.needsDisplay = true
+                applyThumbnailGridChange(renderer: renderer, view: view, updateInfoBar: false) {
+                    renderer.gridLayout.selectedIndex = idx
+                    renderer.gridLayout.scrollToSelection()
+                }
                 return
             }
         }
@@ -234,8 +288,10 @@ class InputHandler {
 
     private func cancelFilenameSearch(renderer: Renderer, view: MTKView) {
         if let index = filenameSearchStartIndex, index < renderer.imageList.count {
-            renderer.gridLayout.selectedIndex = index
-            renderer.gridLayout.scrollToSelection()
+            applyThumbnailGridChange(renderer: renderer, view: view, updateInfoBar: false) {
+                renderer.gridLayout.selectedIndex = index
+                renderer.gridLayout.scrollToSelection()
+            }
         }
         clearFilenameSearch(renderer: renderer)
         view.needsDisplay = true
@@ -258,21 +314,21 @@ class InputHandler {
 
         switch keyCode {
         case 123:  // Left
-            renderer.gridLayout.moveLeft()
-            renderer.updateInfoBar()
-            view.needsDisplay = true
+            applyThumbnailGridChange(renderer: renderer, view: view) {
+                renderer.gridLayout.moveLeft()
+            }
         case 124:  // Right
-            renderer.gridLayout.moveRight()
-            renderer.updateInfoBar()
-            view.needsDisplay = true
+            applyThumbnailGridChange(renderer: renderer, view: view) {
+                renderer.gridLayout.moveRight()
+            }
         case 125:  // Down
-            renderer.gridLayout.moveDown()
-            renderer.updateInfoBar()
-            view.needsDisplay = true
+            applyThumbnailGridChange(renderer: renderer, view: view) {
+                renderer.gridLayout.moveDown()
+            }
         case 126:  // Up
-            renderer.gridLayout.moveUp()
-            renderer.updateInfoBar()
-            view.needsDisplay = true
+            applyThumbnailGridChange(renderer: renderer, view: view) {
+                renderer.gridLayout.moveUp()
+            }
         case 36:  // Enter/Return
             renderer.enterImageMode(at: renderer.gridLayout.selectedIndex)
         default:
@@ -438,20 +494,60 @@ class InputHandler {
 
     private func handleThumbnailScroll(event: NSEvent, view: MTKView) {
         guard let renderer = renderer else { return }
-        let delta = Float(-event.scrollingDeltaY) * 2.0
-        renderer.gridLayout.scrollBy(delta: delta)
-        view.needsDisplay = true
+        let vpH = renderer.gridLayout.viewportHeight
+
+        if event.phase != [] || event.momentumPhase != [] {
+            // Trackpad: already has momentum, apply directly
+            let delta = Float(-event.scrollingDeltaY) * 3.0
+            renderer.cancelThumbnailSmoothScroll()
+            renderer.gridLayout.scrollBy(delta: delta)
+            view.needsDisplay = true
+        } else {
+            // Discrete mouse wheel: scroll ~20% of viewport per notch, animated
+            let delta = Float(-event.scrollingDeltaY) * vpH * 0.2
+            renderer.smoothScrollBy(delta: delta)
+        }
+        renderer.showScrollbar()
     }
 
     private func handleImageScroll(event: NSEvent, view: MTKView) {
+        guard let renderer = renderer else { return }
+
+        if event.phase == .began {
+            imageScrollNavigator.reset()
+        }
+
+        defer {
+            if event.phase == .cancelled || (event.phase == .ended && event.momentumPhase == []) || event.momentumPhase == .ended {
+                imageScrollNavigator.reset()
+            }
+        }
+
         if event.phase != [] || event.momentumPhase != [] {
+            if renderer.scale <= 1.0 && renderer.hasMultipleImages {
+                if imageScrollNavigator.didTrigger {
+                    return
+                }
+
+                let normalizedX = Float(event.scrollingDeltaX) / max(Float(view.bounds.width), 1.0)
+                let normalizedY = Float(event.scrollingDeltaY) / max(Float(view.bounds.height), 1.0)
+
+                if let direction = imageScrollNavigator.consume(
+                    normalizedDeltaX: normalizedX,
+                    normalizedDeltaY: normalizedY
+                ) {
+                    navigate(direction: direction, view: view)
+                    return
+                }
+            }
+
             let dx = Float(event.scrollingDeltaX) / Float(view.bounds.width) * 2.0
             let dy = Float(-event.scrollingDeltaY) / Float(view.bounds.height) * 2.0
-            renderer?.panBy(dx: dx, dy: dy)
+            renderer.panBy(dx: dx, dy: dy)
             view.needsDisplay = true
         } else {
             let zoomFactor: Float = 1.0 + Float(event.scrollingDeltaY) * 0.05
-            renderer?.zoomBy(factor: zoomFactor)
+            renderer.zoomBy(factor: zoomFactor)
             view.needsDisplay = true
         }
     }
@@ -478,9 +574,9 @@ class InputHandler {
             switch gesture.state {
             case .changed:
                 let factor = max(0.7, min(1.3, 1.0 + Float(gesture.magnification)))
-                renderer.gridLayout.zoomBy(factor: factor)
-                renderer.updateInfoBar()
-                view.needsDisplay = true
+                applyThumbnailGridChange(renderer: renderer, view: view) {
+                    renderer.gridLayout.zoomBy(factor: factor)
+                }
             default:
                 break
             }
@@ -488,20 +584,37 @@ class InputHandler {
     }
 
     func handlePan(gesture: NSPanGestureRecognizer, view: MTKView) {
-        guard renderer?.mode == .image else { return }
+        guard let renderer = renderer, renderer.mode == .image else { return }
 
         switch gesture.state {
         case .began:
-            NSCursor.closedHand.set()
+            imagePanNavigator.reset()
+            if renderer.scale > 1.0 {
+                NSCursor.closedHand.set()
+            } else {
+                NSCursor.arrow.set()
+            }
         case .changed:
             let t = gesture.translation(in: view)
+            gesture.setTranslation(.zero, in: view)
             let dx = Float(t.x) / Float(view.bounds.width) * 2.0
             let dy = Float(t.y) / Float(view.bounds.height) * 2.0
-            renderer?.panBy(dx: dx, dy: dy)
-            gesture.setTranslation(.zero, in: view)
+
+            if renderer.scale <= 1.0 && renderer.hasMultipleImages {
+                if let direction = imagePanNavigator.consume(
+                    normalizedDeltaX: dx * 0.5,
+                    normalizedDeltaY: dy * 0.5
+                ) {
+                    navigate(direction: direction, view: view)
+                }
+                return
+            }
+
+            renderer.panBy(dx: dx, dy: dy)
             view.needsDisplay = true
         case .ended, .cancelled:
-            if renderer?.scale ?? 1.0 > 1.0 {
+            imagePanNavigator.reset()
+            if renderer.scale > 1.0 {
                 NSCursor.openHand.set()
             } else {
                 NSCursor.arrow.set()
@@ -509,5 +622,365 @@ class InputHandler {
         default:
             break
         }
+    }
+
+    // MARK: - Mouse Click Handling
+
+    /// Convert a window event location to GridLayout point-space (origin top-left).
+    private func gridPoint(event: NSEvent, view: MTKView) -> (x: Float, y: Float) {
+        let local = view.convert(event.locationInWindow, from: nil)
+        return (Float(local.x), Float(view.bounds.height - local.y))
+    }
+
+    func handleMouseDown(event: NSEvent, view: MTKView) {
+        guard let renderer = renderer else { return }
+
+        switch renderer.mode {
+        case .thumbnail:
+            handleThumbnailMouseDown(event: event, view: view)
+        case .image:
+            handleImageMouseDown(event: event, view: view)
+        }
+    }
+
+    func handleMouseDragged(event: NSEvent, view: MTKView) {
+        guard let renderer = renderer, renderer.mode == .image, renderer.scale > 1.0 else { return }
+
+        NSCursor.closedHand.set()
+        let dx = Float(event.deltaX) / Float(view.bounds.width) * 2.0
+        let dy = Float(-event.deltaY) / Float(view.bounds.height) * 2.0
+        renderer.panBy(dx: dx, dy: dy)
+        view.needsDisplay = true
+    }
+
+    func handleMouseUp(event: NSEvent, view: MTKView) {
+        guard let renderer = renderer, renderer.mode == .image, renderer.scale > 1.0 else { return }
+        // Let cursor rects take over again
+        view.window?.invalidateCursorRects(for: view)
+    }
+
+    private func handleThumbnailMouseDown(event: NSEvent, view: MTKView) {
+        guard let renderer = renderer else { return }
+        let pt = gridPoint(event: event, view: view)
+
+        guard let hitIndex = renderer.gridLayout.itemIndex(at: pt) else { return }
+
+        renderer.enterImageMode(at: hitIndex)
+    }
+
+    private func handleImageMouseDown(event: NSEvent, view: MTKView) {
+        guard let renderer = renderer else { return }
+        let local = view.convert(event.locationInWindow, from: nil)
+        let xFrac = local.x / view.bounds.width
+        let edgeZone: CGFloat = 0.15
+
+        // Edge zones: always navigate (any click count)
+        if xFrac < edgeZone && renderer.hasMultipleImages {
+            navigate(direction: -1, view: view)
+            return
+        }
+        if xFrac > (1.0 - edgeZone) && renderer.hasMultipleImages {
+            navigate(direction: 1, view: view)
+            return
+        }
+
+        // Center zone: when zoomed, ignore clicks (drag to pan instead);
+        // otherwise click returns to grid
+        if !renderer.hasMultipleImages || renderer.scale > 1.0 { return }
+        renderer.enterThumbnailMode()
+    }
+
+    // MARK: - Mouse Move / Hover
+
+    func handleMouseMoved(event: NSEvent, view: MTKView) {
+        guard let renderer = renderer else { return }
+
+        switch renderer.mode {
+        case .thumbnail:
+            handleThumbnailMouseMoved(event: event, view: view)
+        case .image:
+            handleImageMouseMoved(event: event, view: view)
+        }
+    }
+
+    private func handleThumbnailMouseMoved(event: NSEvent, view: MTKView) {
+        guard let renderer = renderer else { return }
+        guard renderer.config.chrome else { return }
+
+        let pt = gridPoint(event: event, view: view)
+        let newHover = renderer.gridLayout.itemIndex(at: pt)
+
+        if newHover != hoveredIndex {
+            hoveredIndex = newHover
+            view.needsDisplay = true
+        }
+
+        renderer.showScrollbar()
+    }
+
+    private func handleImageMouseMoved(event: NSEvent, view: MTKView) {
+        guard let renderer = renderer else { return }
+        guard renderer.config.chrome else { return }
+
+        let local = view.convert(event.locationInWindow, from: nil)
+        let xFrac = Float(local.x / view.bounds.width)
+
+        let edgeZone: Float = 0.15
+        let wasLeft = mouseInLeftEdge
+        let wasRight = mouseInRightEdge
+        mouseInLeftEdge = xFrac < edgeZone && renderer.hasMultipleImages
+        mouseInRightEdge = xFrac > (1.0 - edgeZone) && renderer.hasMultipleImages
+
+        if mouseInLeftEdge || mouseInRightEdge {
+            renderer.showNavButtons()
+        } else if wasLeft || wasRight {
+            renderer.scheduleHideNavButtons()
+        }
+
+        if mouseInLeftEdge != wasLeft || mouseInRightEdge != wasRight {
+            view.needsDisplay = true
+        }
+    }
+
+    func handleMouseExited(view: MTKView) {
+        guard let renderer = renderer else { return }
+
+        if hoveredIndex != nil {
+            hoveredIndex = nil
+            view.needsDisplay = true
+        }
+        mouseInLeftEdge = false
+        mouseInRightEdge = false
+        if renderer.config.chrome {
+            renderer.scheduleHideNavButtons()
+        }
+    }
+
+    // MARK: - Context Menu
+
+    func handleRightMouseDown(event: NSEvent, view: MTKView) {
+        guard let renderer = renderer else { return }
+        if renderer.mode == .thumbnail {
+            let pt = gridPoint(event: event, view: view)
+            if let hitIndex = renderer.gridLayout.itemIndex(at: pt) {
+                applyThumbnailGridChange(renderer: renderer, view: view) {
+                    renderer.gridLayout.selectedIndex = hitIndex
+                }
+            }
+        }
+        let menu = buildContextMenu(renderer: renderer)
+        menu.popUp(positioning: nil, at: view.convert(event.locationInWindow, from: nil), in: view)
+    }
+
+    func handleOtherMouseDown(event: NSEvent, view: MTKView) {
+        guard let renderer = renderer else { return }
+        // Mouse button 3 = back, button 4 = forward
+        switch event.buttonNumber {
+        case 3:
+            switch renderer.mode {
+            case .thumbnail:
+                applyThumbnailGridChange(renderer: renderer, view: view) {
+                    renderer.gridLayout.moveLeft()
+                }
+            case .image:
+                navigate(direction: -1, view: view)
+            }
+        case 4:
+            switch renderer.mode {
+            case .thumbnail:
+                applyThumbnailGridChange(renderer: renderer, view: view) {
+                    renderer.gridLayout.moveRight()
+                }
+            case .image:
+                navigate(direction: 1, view: view)
+            }
+        default:
+            break
+        }
+    }
+
+    private func buildContextMenu(renderer: Renderer) -> NSMenu {
+        let menu = NSMenu()
+
+        switch renderer.mode {
+        case .thumbnail:
+            buildThumbnailContextMenu(menu: menu, renderer: renderer)
+        case .image:
+            buildImageContextMenu(menu: menu, renderer: renderer)
+        }
+
+        return menu
+    }
+
+    private func buildThumbnailContextMenu(menu: NSMenu, renderer: Renderer) {
+        menu.addItem(menuItem("Open", action: #selector(contextOpen), key: "↩"))
+        menu.addItem(.separator())
+        menu.addItem(menuItem("Reveal in Finder", action: #selector(contextRevealInFinder), key: "o"))
+        menu.addItem(menuItem("Copy Image", action: #selector(contextCopyImage), key: "y"))
+        menu.addItem(menuItem("Copy Path", action: #selector(contextCopyPath), key: "Y"))
+        menu.addItem(.separator())
+        menu.addItem(menuItem("Image Info", action: #selector(contextToggleImageInfo), key: "i"))
+        menu.addItem(menuItem("Ignore Folder", action: #selector(contextIgnoreFolder), key: "I"))
+        menu.addItem(.separator())
+        menu.addItem(menuItem("Zoom In", action: #selector(contextZoomIn), key: "+"))
+        menu.addItem(menuItem("Zoom Out", action: #selector(contextZoomOut), key: "-"))
+        menu.addItem(menuItem("Reset Zoom", action: #selector(contextResetZoom), key: "0"))
+        menu.addItem(.separator())
+        menu.addItem(menuItem("Shuffle", action: #selector(contextShuffle), key: "s"))
+        menu.addItem(menuItem("Selection Effect", action: #selector(contextCycleSelectionEffect), key: "b"))
+        menu.addItem(.separator())
+        menu.addItem(menuItem("Move to Trash", action: #selector(contextDelete), key: "d"))
+        menu.addItem(.separator())
+        menu.addItem(menuItem("Fullscreen", action: #selector(contextFullscreen), key: "f"))
+        menu.addItem(menuItem("Quit", action: #selector(contextQuit), key: "q"))
+    }
+
+    private func buildImageContextMenu(menu: NSMenu, renderer: Renderer) {
+        if renderer.hasMultipleImages {
+            menu.addItem(menuItem("Back to Grid", action: #selector(contextBackToGrid), key: "q"))
+            menu.addItem(menuItem("Next Image", action: #selector(contextNextImage), key: "n"))
+            menu.addItem(menuItem("Previous Image", action: #selector(contextPrevImage), key: "p"))
+            menu.addItem(.separator())
+        }
+        menu.addItem(menuItem("Reveal in Finder", action: #selector(contextRevealInFinder), key: "o"))
+        menu.addItem(menuItem("Copy Image", action: #selector(contextCopyImage), key: "y"))
+        menu.addItem(menuItem("Copy Path", action: #selector(contextCopyPath), key: "Y"))
+        menu.addItem(menuItem("Image Info", action: #selector(contextToggleImageInfo), key: "i"))
+        menu.addItem(.separator())
+        menu.addItem(menuItem("Rotate CW", action: #selector(contextRotate), key: "r"))
+        menu.addItem(menuItem("Reset View", action: #selector(contextResetView), key: "0"))
+        menu.addItem(.separator())
+        if renderer.hasMultipleImages {
+            let autoplayItem = menuItem("Autoplay", action: #selector(contextToggleAutoplay), key: "a")
+            if renderer.isAutoplayActive {
+                autoplayItem.state = .on
+            }
+            menu.addItem(autoplayItem)
+            menu.addItem(menuItem("Shuffle", action: #selector(contextShuffle), key: "s"))
+            menu.addItem(.separator())
+        }
+        menu.addItem(menuItem("Move to Trash", action: #selector(contextDelete), key: "d"))
+        menu.addItem(.separator())
+        menu.addItem(menuItem("Fullscreen", action: #selector(contextFullscreen), key: "f"))
+        menu.addItem(menuItem("Quit", action: #selector(contextQuit), key: "q"))
+    }
+
+    private func menuItem(_ title: String, action: Selector, key: String) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+        item.target = self
+        // Show key hint in the menu item (non-functional, just informational)
+        let attrTitle = NSMutableAttributedString(string: title)
+        let keyHint = NSAttributedString(
+            string: "  \(key)",
+            attributes: [.foregroundColor: NSColor.secondaryLabelColor]
+        )
+        attrTitle.append(keyHint)
+        item.attributedTitle = attrTitle
+        return item
+    }
+
+    // MARK: - Context Menu Actions
+
+    @objc private func contextOpen() {
+        guard let renderer = renderer else { return }
+        renderer.enterImageMode(at: renderer.gridLayout.selectedIndex)
+    }
+
+    @objc private func contextBackToGrid() {
+        renderer?.enterThumbnailMode()
+    }
+
+    @objc private func contextNextImage() {
+        guard let view = renderer?.window?.contentView as? MTKView else { return }
+        navigate(direction: 1, view: view)
+    }
+
+    @objc private func contextPrevImage() {
+        guard let view = renderer?.window?.contentView as? MTKView else { return }
+        navigate(direction: -1, view: view)
+    }
+
+    @objc private func contextRevealInFinder() {
+        renderer?.revealInFinder()
+    }
+
+    @objc private func contextCopyImage() {
+        renderer?.copyCurrentImage()
+    }
+
+    @objc private func contextCopyPath() {
+        renderer?.copyCurrentImagePath()
+    }
+
+    @objc private func contextToggleImageInfo() {
+        renderer?.toggleImageInfo()
+    }
+
+    @objc private func contextIgnoreFolder() {
+        renderer?.ignoreCurrentFolder()
+    }
+
+    @objc private func contextZoomIn() {
+        guard let renderer = renderer, let view = renderer.window?.contentView as? MTKView else { return }
+        applyThumbnailGridChange(renderer: renderer, view: view) {
+            renderer.gridLayout.zoomBy(factor: 1.15)
+        }
+    }
+
+    @objc private func contextZoomOut() {
+        guard let renderer = renderer, let view = renderer.window?.contentView as? MTKView else { return }
+        applyThumbnailGridChange(renderer: renderer, view: view) {
+            renderer.gridLayout.zoomBy(factor: 0.87)
+        }
+    }
+
+    @objc private func contextResetZoom() {
+        guard let renderer = renderer, let view = renderer.window?.contentView as? MTKView else { return }
+        applyThumbnailGridChange(renderer: renderer, view: view) {
+            renderer.gridLayout.resetZoom()
+        }
+    }
+
+    @objc private func contextShuffle() {
+        renderer?.toggleShuffle()
+    }
+
+    @objc private func contextCycleSelectionEffect() {
+        guard let view = renderer?.window?.contentView as? MTKView else { return }
+        renderer?.cycleSelectionEffect()
+        view.needsDisplay = true
+    }
+
+    @objc private func contextDelete() {
+        guard let renderer = renderer else { return }
+        let index = renderer.mode == .thumbnail
+            ? renderer.gridLayout.selectedIndex
+            : renderer.imageList.currentIndex
+        renderer.deleteImage(at: index)
+    }
+
+    @objc private func contextFullscreen() {
+        renderer?.window?.toggleFullScreen(nil)
+    }
+
+    @objc private func contextQuit() {
+        NSApp.terminate(nil)
+    }
+
+    @objc private func contextRotate() {
+        guard let view = renderer?.window?.contentView as? MTKView else { return }
+        renderer?.rotateCW()
+        view.needsDisplay = true
+    }
+
+    @objc private func contextResetView() {
+        guard let renderer = renderer, let view = renderer.window?.contentView as? MTKView else { return }
+        renderer.resetView()
+        view.window?.invalidateCursorRects(for: view)
+        view.needsDisplay = true
+    }
+
+    @objc private func contextToggleAutoplay() {
+        renderer?.toggleAutoplay()
     }
 }

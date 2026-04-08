@@ -246,5 +246,78 @@ enum ShaderSource {
 
         return float4(r, g, b, a);
     }
+
+    // MARK: - Nav Zone Overlay (dark overlay + chevron)
+
+    struct NavZoneUniforms {
+        float alpha;       // overall opacity (auto-hide)
+        int pointsLeft;    // 1 = left chevron (<), 0 = right chevron (>)
+        float aspectRatio; // zone width / zone height (for correct SDF)
+    };
+
+    float navSdSegment(float2 p, float2 a, float2 b) {
+        float2 pa = p - a;
+        float2 ba = b - a;
+        float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+        return length(pa - ba * h);
+    }
+
+    fragment float4 navZoneFragment(
+        VertexOut in [[stage_in]],
+        constant NavZoneUniforms &nav [[buffer(0)]]
+    ) {
+        float2 uv = in.texCoord;
+
+        // Center coordinates (-1..1), aspect-corrected
+        float2 p = uv * 2.0 - 1.0;
+        p.x *= nav.aspectRatio;
+
+        // Flip x for right-pointing chevron (shader draws left by default)
+        if (nav.pointsLeft == 0) p.x = -p.x;
+
+        float angleDeg = 50.0;
+        float size = 0.2;
+        float thickness = 0.008;
+
+        float angle = angleDeg * M_PI_F / 180.0;
+
+        float2 dir1 = normalize(float2(cos(angle),  sin(angle)));
+        float2 dir2 = normalize(float2(cos(angle), -sin(angle)));
+
+        // Center the whole chevron: shift tip left by half the arm's x-extent
+        float2 tip = float2(-cos(angle) * size * 0.5, 0.0);
+
+        float2 a = tip + dir1 * size;
+        float2 b = tip;
+        float2 c = tip + dir2 * size;
+
+        float d = min(
+            navSdSegment(p, a, b),
+            navSdSegment(p, c, b)
+        );
+
+        float edge = fwidth(d);
+
+        // Dark shadow (wider) behind white chevron — visible on any background
+        float shadowThickness = thickness + 0.010;
+        float shadow = smoothstep(shadowThickness + edge, shadowThickness - edge, d);
+        float chevron = smoothstep(thickness + edge, thickness - edge, d);
+
+        // Layer: dark overlay → dark shadow → white chevron
+        float overlay = 0.25;
+        // Blend layers back-to-front
+        float3 color = float3(0.0);  // dark overlay base
+        float alpha = overlay;
+
+        // Shadow: darker halo around chevron
+        color = mix(color, float3(0.0), shadow);
+        alpha = mix(alpha, 0.85, shadow);
+
+        // Chevron: white on top
+        color = mix(color, float3(0.9), chevron);
+        alpha = mix(alpha, 0.95, chevron);
+
+        return float4(color, alpha * nav.alpha);
+    }
     """
 }

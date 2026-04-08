@@ -15,6 +15,9 @@ class GridLayout {
         maxThumbnailSize = max(420.0, defaultSize * 2.0)
         thumbnailSize = defaultSize
     }
+    var gap: Float = 2.0 {
+        didSet { if oldValue != gap { invalidateLayout() } }
+    }
     var padding: Float = 2.0 {
         didSet { if oldValue != padding { invalidateLayout() } }
     }
@@ -118,7 +121,7 @@ class GridLayout {
         ensureAspectsCapacity(totalItems)
 
         let margin = padding
-        let gap = padding
+        let itemGap = gap
         let availableWidth = viewportWidth - 2 * margin
         let targetHeight = thumbnailSize
 
@@ -137,7 +140,7 @@ class GridLayout {
                 let aspect = max(aspects[idx], 0.1)
                 let itemNatWidth = targetHeight * aspect
                 let newNatWidth = rowNaturalWidth + itemNatWidth
-                let gapWidth = Float(itemsInRow) * gap
+                let gapWidth = Float(itemsInRow) * itemGap
                 let newTotalWidth = newNatWidth + gapWidth
 
                 if newTotalWidth > availableWidth && itemsInRow > 0 {
@@ -152,7 +155,7 @@ class GridLayout {
             let rowEnd = rowStart + itemsInRow
 
             // Scale row to fill available width (except last row)
-            let totalGaps = Float(max(0, itemsInRow - 1)) * gap
+            let totalGaps = Float(max(0, itemsInRow - 1)) * itemGap
             let imageSpace = availableWidth - totalGaps
             let scale: Float
             if rowEnd < totalItems {
@@ -169,11 +172,11 @@ class GridLayout {
                 let aspect = max(aspects[i], 0.1)
                 let itemWidth = rowHeight * aspect
                 itemRects[i] = ItemRect(x: x, y: currentY, width: itemWidth, height: rowHeight)
-                x += itemWidth + gap
+                x += itemWidth + itemGap
             }
 
             rowInfos.append(RowInfo(startIndex: rowStart, count: itemsInRow, y: currentY, height: rowHeight))
-            currentY += rowHeight + gap
+            currentY += rowHeight + itemGap
             rowStart = rowEnd
         }
     }
@@ -332,6 +335,56 @@ class GridLayout {
         )
     }
 
+    // MARK: - Hit Testing
+
+    /// Returns the item index at the given point in view coordinates (origin top-left).
+    func itemIndex(at point: (x: Float, y: Float)) -> Int? {
+        ensureLayout()
+        guard !rowInfos.isEmpty else { return nil }
+
+        // Convert to content-space by adding scroll offset
+        let contentY = point.y + scrollOffset
+
+        // Binary search for the row containing this y coordinate
+        var lo = 0, hi = rowInfos.count - 1
+        var targetRow: Int? = nil
+        while lo <= hi {
+            let mid = (lo + hi) / 2
+            let row = rowInfos[mid]
+            if contentY < row.y {
+                hi = mid - 1
+            } else if contentY > row.y + row.height {
+                lo = mid + 1
+            } else {
+                targetRow = mid
+                break
+            }
+        }
+        guard let ri = targetRow else { return nil }
+
+        // Linear scan items in this row
+        let row = rowInfos[ri]
+        for i in row.startIndex ..< (row.startIndex + row.count) {
+            let rect = itemRects[i]
+            if point.x >= rect.x && point.x < rect.x + rect.width {
+                return i
+            }
+        }
+        return nil
+    }
+
+    /// Fraction of total content scrolled (0.0 = top, 1.0 = bottom).
+    var scrollFraction: Float {
+        let maxScroll = max(totalHeight - viewportHeight, 1)
+        return scrollOffset / maxScroll
+    }
+
+    /// Fraction of total content visible in the viewport.
+    var visibleFraction: Float {
+        guard totalHeight > 0 else { return 1 }
+        return min(1, viewportHeight / totalHeight)
+    }
+
     // MARK: - Row Helpers
 
     private func rowIndex(for itemIndex: Int) -> Int {
@@ -440,7 +493,7 @@ class GridLayout {
         var targetRow = ri
         while targetRow > 0 {
             targetRow -= 1
-            visibleHeight += rowInfos[targetRow].height + padding
+            visibleHeight += rowInfos[targetRow].height + gap
             if visibleHeight >= viewportHeight { break }
         }
 
@@ -460,7 +513,7 @@ class GridLayout {
         var targetRow = ri
         while targetRow < rowInfos.count - 1 {
             targetRow += 1
-            visibleHeight += rowInfos[targetRow].height + padding
+            visibleHeight += rowInfos[targetRow].height + gap
             if visibleHeight >= viewportHeight { break }
         }
 
